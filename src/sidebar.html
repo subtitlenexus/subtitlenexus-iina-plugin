@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" type="text/css" href="sidebar.css">
+<script src="sidebar.js"></script>
+<style>
+    button {
+        margin-bottom: 15px;
+    }
+</style>
+</head>
+<body>
+
+<div class="header-container">
+    <h1>Subtitle Nexus</h1>
+    <span id="premiumBadge" class="premium-badge" style="display: none;">Premium</span>
+    <button id="getPremiumBtn" class="btn-premium-small" onclick="openPremiumPage()" style="display: none;">Get Premium ↗</button>
+</div>
+
+
+<div id="mainView" class="view active">
+    
+    <div id="mainLoggedOut">
+        <p style="color: #888; margin-bottom: 15px;">Sign in to use Subtitle Nexus</p>
+        <button onclick="startLogin()">Login with Browser</button>
+        <button onclick="showApiView()" class="secondary">Set API Key Manually</button>
+    </div>
+
+    
+    <div id="mainLoggedIn" style="display: none;">
+        <button id="transcription-btn" onclick="toggleTranscription()">Start Live Subtitles</button>
+        <p class="helper-text">Subtitles stream as you watch — first line appears in ~60s</p>
+        <div class="status-divider">
+            <hr class="divider-line">
+            <div class="status-badge not-submitted" id="statusBadge">
+                <div class="status-indicator"></div>
+                <span>Not Submitted</span>
+            </div>
+            <hr class="divider-line">
+        </div>
+
+        
+        <div id="lastError" class="last-error" style="display: none;"></div>
+
+        <button onclick="showLanguageView()" class="setting-btn">
+            <span class="setting-label">Language</span>
+            <span class="setting-value" id="mainLang">--</span>
+        </button>
+        <button onclick="showModelView()" class="setting-btn">
+            <span class="setting-label">Model</span>
+            <span class="setting-value" id="mainModel">--</span>
+        </button>
+        <button onclick="showApiView()" class="setting-btn">
+            <span class="setting-label">Account</span>
+            <span class="setting-value" id="mainAccountStatus">--</span>
+        </button>
+
+        <hr class="section-divider">
+
+        <div class="section checkbox-section" style="margin-top: 10px;">
+            <input type="checkbox" id="autoTranscribe" onchange="saveAutoTranscribe()" />
+            <label for="autoTranscribe">Auto Transcribe New Files</label>
+        </div>
+
+        <hr class="section-divider">
+
+        <button onclick="showAdvancedView()" class="setting-btn">
+            <span class="setting-label">Advanced</span>
+            <span class="setting-value">→</span>
+        </button>
+    </div>
+</div>
+
+
+<div id="languageView" class="view">
+    <h2>Language</h2>
+    <div class="current-value">
+        <small>Audio Language (spoken in video)</small>
+        <strong id="currentAudioLang">Loading...</strong>
+    </div>
+    <div class="language-dropdown">
+        <select id="audioLanguageSelect" onchange="saveAudioLanguage()">
+            <option value="">Choose a language...</option>
+            <option value="en">English</option>
+            <option value="ja">日本語 (Japanese)</option>
+        </select>
+    </div>
+    <div id="audioLangStatus"></div>
+    <hr class="section-divider">
+    <div class="current-value">
+        <small>Subtitle Language (output)</small>
+        <strong id="currentLang">Loading...</strong>
+    </div>
+    <div class="language-dropdown">
+        <select id="languageSelect" onchange="saveSubtitleLanguage()">
+            <option value="">Choose a language...</option>
+            
+            
+            
+            <option value="en">English</option>
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+        </select>
+    </div>
+    <div id="status"></div>
+    <button class="secondary" onclick="showMainView()">Back</button>
+</div>
+
+
+<div id="modelView" class="view">
+    <h2>Model Selection</h2>
+    <div class="current-value">
+        <small>Current Model</small>
+        <strong id="currentModel">Loading...</strong>
+    </div>
+    <div class="model-dropdown">
+        <select id="modelSelect" onchange="saveModel()">
+            <option value="">Choose a model...</option>
+            
+            <option value="vega-preview">vega-preview</option>
+            <option value="lulu-2504">lulu-2504</option>
+        </select>
+    </div>
+    <div id="modelStatus"></div>
+    <button class="secondary" onclick="showMainView()">Back</button>
+</div>
+
+
+<div id="apiView" class="view">
+    <h2>Account</h2>
+    
+    <div id="loggedOutSection">
+        <p style="color: #888; margin-bottom: 15px;">Sign in to use Subtitle Nexus</p>
+        <button onclick="startLogin()">Login with Browser</button>
+        <hr class="section-divider">
+        <p style="color: #666; font-size: 12px; margin-bottom: 10px;">Or set API key manually:</p>
+        <div class="current-value">
+            <small>Current API Key</small>
+            <strong id="currentApiKey" class="setting-value-code">--</strong>
+        </div>
+        <input type="text" id="apiKeyInput" placeholder="Paste API key here..." />
+        <button onclick="saveApiKey()">Save API Key</button>
+    </div>
+    
+    <div id="loggedInSection" style="display: none;">
+        <div class="current-value">
+            <small>Logged in as</small>
+            <strong id="currentUserName">--</strong>
+        </div>
+        <div class="current-value">
+            <small>API Key</small>
+            <strong id="currentApiKeyLoggedIn" class="setting-value-code">--</strong>
+        </div>
+        <button class="danger-btn" onclick="doLogout()">Logout</button>
+    </div>
+    <div id="apiStatus"></div>
+    <button class="secondary" onclick="showMainView()">Back</button>
+</div>
+
+
+<div id="advancedView" class="view">
+    <h2>Advanced</h2>
+    <div class="section checkbox-section" style="margin-bottom: 15px;">
+        <input type="checkbox" id="autoPurchase" onchange="saveAutoPurchase()" />
+        <label for="autoPurchase">Buy Existing Subs if Past Daily Limit</label>
+    </div>
+    <div class="section checkbox-section" style="margin-bottom: 15px;">
+        <input type="checkbox" id="ignoreCommunity" onchange="saveIgnoreCommunity()" />
+        <label for="ignoreCommunity">Ignore Community Subs</label>
+    </div>
+    <div class="section" style="margin-bottom: 15px;">
+        <label for="audioFormat" style="display: block; margin-bottom: 5px;">Audio Format</label>
+        <select id="audioFormat" onchange="saveAudioFormat()">
+            <option value="auto">Auto (auto pick best for request)</option>
+            <option value="mp3">MP3 (ok quality, fast upload)</option>
+            <option value="wav">WAV (high quality, slow upload)</option>
+        </select>
+    </div>
+    <button onclick="openWorkDir()">Open Work Dir</button>
+    <button onclick="openConfigFile()">Open Config File</button>
+    <button onclick="resetState()" class="danger-btn">Reset File State</button>
+
+    <hr class="section-divider">
+    <h3 style="margin: 10px 0 5px;">Recent Logs</h3>
+    <div id="logsPreview" class="logs-preview"></div>
+    <button onclick="copyLogs()">Export Logs</button>
+    <button class="secondary" onclick="showMainView()">Back</button>
+</div>
+
+<footer>
+    <img src="assets/icon_transparent.webp" alt="Subtitle Nexus" onclick="openWebsite()" style="cursor:pointer">
+</footer>
+
+</body>
+</html>

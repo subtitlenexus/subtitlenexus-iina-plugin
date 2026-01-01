@@ -1,0 +1,26 @@
+{
+  "name": "Nexus",
+  "identifier": "dev.dev.iina-nexus-plugin",
+  "version": "0.0.24",
+  "ghRepo": "subtitlenexus/subtitlenexus-iina-plugin",
+  "ghVersion": 1,
+  "description": "Live Transcription Plugin for IINA from Subtitle Nexus",
+  "author": {
+    "name": "Subtitle Nexus",
+    "email": "support@subtitlenexus.com",
+    "url": "https://subtitlenexus.com/video-player/"
+  },
+  "entry": "src/index.js",
+  "permissions": [
+    "show-osd",
+    "file-system",
+    "network-request"
+  ],
+  "allowedDomains": [
+    "*"
+  ],
+  "sidebarTab": {
+    "name": "Nexus",
+    "icon": "menubar.rectangle"
+  }
+}
