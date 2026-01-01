@@ -132,6 +132,13 @@ local function extract_uuid(subtitle_id)
     return subtitle_id:match("subtitle_request:([^:]+)") or subtitle_id
 end
 
+local function make_curl_args(extra)
+    local args = {"curl"}
+    for _, a in ipairs(platform.current.curl_args) do args[#args+1] = a end
+    for _, a in ipairs(extra) do args[#args+1] = a end
+    return args
+end
+
 local function report_error(error_name, error_message, context)
     local endpoint = "https://" .. cfg.domain .. "/v1/report-error/"
     local payload = utils.format_json({
@@ -144,13 +151,8 @@ local function report_error(error_name, error_message, context)
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = {
-            "curl", "-s", "-X", "POST",
-            "-H", "X-API-KEY: " .. cfg.api_key,
-            "-H", "Content-Type: application/json",
-            "-d", payload,
-            endpoint
-        }
+        args = make_curl_args({"-s", "-X", "POST", "-H", "X-API-KEY: " .. cfg.api_key,
+            "-H", "Content-Type: application/json", "-d", payload, endpoint})
     }, function(success, res)
         if not success or (res and res.status ~= 0) then
             msg.warn("Failed to report error: " .. (res and res.stderr or "unknown"))
@@ -342,11 +344,7 @@ end
 
 get_audio_format = function(work_dir)
     local fmt = cfg.audio_format or "auto"
-    if fmt == "auto" then
-        local lang = work_dir and get_audio_language(work_dir)
-        return lang == "ja" and "wav" or "mp3"
-    end
-    return fmt
+    return fmt == "auto" and "wav" or fmt
 end
 
 local function sync_config()
@@ -468,7 +466,7 @@ local function extract_full_audio(input_path, output_path, callback)
     end
 
     local duration_sec = file_duration or mp.get_property_number("duration") or 0
-    local fmt = output_path:match("%.([^%.]+)$") or "mp3"
+    local fmt = output_path:match("%.([^%.]+)$") or "wav"
     local expected_sizes = {
         wav = duration_sec * 16000 * 2,
         mp3 = duration_sec * 32000 / 8
@@ -554,11 +552,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
     end
 
     local url = "https://" .. cfg.domain .. endpoint
-    local args = {
-        "curl", "-s", "-X", method,
-        "-w", "\n%{http_code}",
-        "--max-time", "30",
-    }
+    local args = make_curl_args({"-s", "-X", method, "-w", "\n%{http_code}", "--max-time", "30"})
     if not skip_auth then
         table.insert(args, "-H")
         table.insert(args, "X-API-Key: " .. cfg.api_key)
@@ -777,7 +771,7 @@ local function stage_scripts_update(scripts_url, version)
     mp.osd_message("Downloading update v" .. version .. "...", 2)
     local result = mp.command_native({
         name = "subprocess",
-        args = {"curl", "-fsSL", "-o", zip_path, scripts_url},
+        args = make_curl_args({"-fsSL", "-o", zip_path, scripts_url}),
         capture_stdout = true
     })
 
@@ -890,13 +884,8 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
     local progress_timer = nil
 
     if is_windows then
-        curl_args = {
-            "curl", "-s", "-X", "PUT",
-            "--data-binary", "@" .. file_path,
-            "-H", "Content-Type: " .. get_audio_content_type(work_dir),
-            "-w", "\n%{http_code}",
-            presigned_url
-        }
+        curl_args = make_curl_args({"-s", "-X", "PUT", "--data-binary", "@" .. file_path,
+            "-H", "Content-Type: " .. get_audio_content_type(work_dir), "-w", "\n%{http_code}", presigned_url})
     else
         progress_file = platform.current.temp_dir .. "/nexus_upload_" .. os.time()
         local curl_cmd = string.format(
@@ -1059,7 +1048,7 @@ local function download_subtitles(download_url, output_path, callback)
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = { "curl", "-s", "--max-time", "30", "-o", output_path, download_url }
+        args = make_curl_args({"-s", "--max-time", "30", "-o", output_path, download_url})
     }, function(success, res)
         local ok = success and res and res.status == 0
         if not ok then
@@ -1085,10 +1074,8 @@ local function check_s3_etag(download_url, callback)
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = {
-            "curl", "-s", "--max-time", "15",
-            "-D", "-", "-o", platform.current.null_device, "-r", "0-0", download_url
-        }
+        args = make_curl_args({"-s", "--max-time", "15", "-D", "-",
+            "-o", platform.current.null_device, "-r", "0-0", download_url})
     }, function(success, res)
         if not success or not res or res.status ~= 0 then
             callback(nil)
@@ -1651,7 +1638,7 @@ local function build_advanced_submenu()
             value = cmd("set-config-auto-purchase", pur_val) },
         { title = "Ignore Community Subs", icon = ign_icon,
             value = cmd("set-config-ignore-community", ign_val) },
-        { title = "Audio Format: " .. (cfg.audio_format or "mp3"):upper(), icon = "audio_file",
+        { title = "Audio Format: " .. (cfg.audio_format or "auto"):upper(), icon = "audio_file",
             value = cmd("toggle-audio-format"), keep_open = true },
         { separator = true, selectable = false },
         { title = "Open Work Dir", icon = "folder_open", value = cmd("open-work-dir") },
@@ -1969,7 +1956,7 @@ mp.register_script_message("set-config-ignore-community", function(value)
 end)
 mp.register_script_message("toggle-audio-format", function()
     local cycle = { auto = "mp3", mp3 = "wav", wav = "auto" }
-    save_config_key("audio_format", cycle[cfg.audio_format] or "mp3")
+    save_config_key("audio_format", cycle[cfg.audio_format] or "wav")
     update_main_menu()
 end)
 mp.register_script_message("set-config-audio-format", function(value)

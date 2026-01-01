@@ -34,6 +34,7 @@ local Platform = createPlatformEnum({
         temp_extract_dir = "temp_update",
         null_device = "NUL",
         temp_dir = os.getenv("TEMP") or "C:\\Temp",
+        curl_args = {"--ssl-no-revoke"},
 
         format_path = function(path)
             return path:gsub("/", "\\")
@@ -110,6 +111,7 @@ local Platform = createPlatformEnum({
         temp_extract_dir = "temp_update",
         null_device = "/dev/null",
         temp_dir = os.getenv("TMPDIR") or "/tmp",
+        curl_args = {},
 
         format_path = function(path)
             return path
