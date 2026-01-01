@@ -468,7 +468,7 @@ local function extract_full_audio(input_path, output_path, callback)
     end
 
     local duration_sec = file_duration or mp.get_property_number("duration") or 0
-    local fmt = cfg.audio_format or "mp3"
+    local fmt = output_path:match("%.([^%.]+)$") or "mp3"
     local expected_sizes = {
         wav = duration_sec * 16000 * 2,
         mp3 = duration_sec * 32000 / 8
@@ -557,6 +557,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
     local args = {
         "curl", "-s", "-X", method,
         "-w", "\n%{http_code}",
+        "--max-time", "30",
     }
     if not skip_auth then
         table.insert(args, "-H")
@@ -1058,7 +1059,7 @@ local function download_subtitles(download_url, output_path, callback)
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = { "curl", "-s", "-o", output_path, download_url }
+        args = { "curl", "-s", "--max-time", "30", "-o", output_path, download_url }
     }, function(success, res)
         local ok = success and res and res.status == 0
         if not ok then
@@ -1084,7 +1085,10 @@ local function check_s3_etag(download_url, callback)
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = { "curl", "-s", "-D", "-", "-o", platform.current.null_device, "-r", "0-0", download_url }
+        args = {
+            "curl", "-s", "--max-time", "15",
+            "-D", "-", "-o", platform.current.null_device, "-r", "0-0", download_url
+        }
     }, function(success, res)
         if not success or not res or res.status ~= 0 then
             callback(nil)
