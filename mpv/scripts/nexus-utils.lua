@@ -29,8 +29,8 @@ local function generate_uuid()
     end)
 end
 
-local function get_file_hash_sha256(filePath, mp)
-    if not filePath or not mp then
+local function get_file_hash_sha256(filePath, mp, platform)
+    if not filePath or not mp or not platform then
         return nil
     end
 
@@ -55,8 +55,8 @@ local function get_file_hash_sha256(filePath, mp)
 
     local hash_input = data_start .. data_end .. tostring(size)
 
-    local temp_dir = os.getenv("TMPDIR") or os.getenv("TEMP") or "/tmp/"
-    if not temp_dir:match("/$") then
+    local temp_dir = platform.temp_dir
+    if not temp_dir:match("[/\\]$") then
         temp_dir = temp_dir .. "/"
     end
     local temp_file = temp_dir .. "nexus_hash_" .. generate_uuid() .. ".tmp"
@@ -69,29 +69,18 @@ local function get_file_hash_sha256(filePath, mp)
     temp:write(hash_input)
     temp:close()
 
-    local is_windows = package.config:sub(1, 1) == "\\"
-
-    local sha_cmd
-    if is_windows then
-        sha_cmd = {"certutil", "-hashfile", temp_file, "SHA256"}
-    else
-        sha_cmd = {"shasum", "-a", "256", temp_file}
-    end
-
     local res = mp.command_native({
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
-        args = sha_cmd
+        args = platform.sha256_file_args(temp_file)
     })
 
     os.remove(temp_file)
 
     if res and res.status == 0 and res.stdout then
-        local hash = res.stdout:match("(%x+)")
-        if hash then
-            return hash
-        end
+        local hash = platform.parse_sha256_output(res.stdout)
+        if hash then return hash end
     end
 
     print("Error: SHA256 command failed")

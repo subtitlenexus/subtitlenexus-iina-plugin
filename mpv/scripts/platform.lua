@@ -99,6 +99,18 @@ local Platform = createPlatformEnum({
             return { "powershell", "-Command", ps_cmd }
         end,
 
+        sha256_file_args = function(file_path)
+            return { "certutil", "-hashfile", file_path, "SHA256" }
+        end,
+
+        parse_sha256_output = function(stdout)
+            for line in stdout:gmatch("[^\r\n]+") do
+                local hash = line:match("^%s*(%x+)%s*$")
+                if hash and #hash == 64 then return hash end
+            end
+            return nil
+        end,
+
         open_url = function(url)
             return { "cmd", "/c", "start", "", url }
         end
@@ -175,6 +187,16 @@ local Platform = createPlatformEnum({
 
         sha256_base64url_args = function(file_path)
             return { "sh", "-c", "shasum -a 256 -b '" .. file_path .. "' | xxd -r -p | base64" }
+        end,
+
+        sha256_file_args = function(file_path)
+            return { "shasum", "-a", "256", file_path }
+        end,
+
+        parse_sha256_output = function(stdout)
+            local hash = stdout:match("^(%x+)")
+            if hash and #hash == 64 then return hash end
+            return nil
         end,
 
         open_url = function(url)

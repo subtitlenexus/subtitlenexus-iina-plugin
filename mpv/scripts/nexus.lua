@@ -204,7 +204,6 @@ local function get_ffmpeg_path()
             return path
         end
     end
-
     msg.warn("Trying to find FFmpeg in system PATH...")
     local test_cmd = is_windows and "where" or "which"
     local res = mp.command_native({
@@ -254,7 +253,7 @@ local function get_or_compute_file_hash_sha256(file_path)
         return file_hash_sha256_map[file_path]
     end
 
-    local hash = nexus_utils.get_file_hash_sha256(file_path, mp)
+    local hash = nexus_utils.get_file_hash_sha256(file_path, mp, platform.current)
     if hash then
         file_hash_sha256_map[file_path] = hash
         msg.warn("Computed SHA256 file hash for " .. file_path .. ": " .. hash)
@@ -369,6 +368,7 @@ local function get_config_path()
     end
     return normalize_path(path)
 end
+
 
 local function load_config_from_file()
     local config_path = get_config_path()
@@ -725,7 +725,6 @@ local function install_staged_update()
             end
         end
     end
-
     local staged_version_file = utils.join_path(STAGING_DIR, "VERSION")
     local vf = io.open(staged_version_file, "r")
     if vf then
@@ -737,7 +736,6 @@ local function install_staged_update()
             dst_vf:close()
         end
     end
-
     local staged_uosc = utils.join_path(STAGING_DIR, "script-opts/uosc.conf")
     local script_opts_dir = utils.join_path(MPV_CONFIG_DIR, "script-opts")
     local uosc_dest = utils.join_path(script_opts_dir, "uosc.conf")
@@ -1314,7 +1312,6 @@ local function start_ai_transcription()
                     end
 
                     msg.warn("Upload complete: " .. upload_id)
-
                     submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
                         if sr_err or not sr_data then
                             transcription_active = false
@@ -1556,6 +1553,7 @@ local function reset_state()
     mp.osd_message("State reset", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     msg.warn("State reset (deleted dir): " .. work_dir)
 end
+
 
 
 local function open_subtitle_url()
@@ -1894,7 +1892,6 @@ local function logout()
     mp.osd_message("Logged out", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     update_main_menu()
 end
-
 
 
 mp.register_script_message("select-audio-language", function(lang_code)
