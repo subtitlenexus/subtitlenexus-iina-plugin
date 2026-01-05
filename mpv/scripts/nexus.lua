@@ -48,6 +48,7 @@ local current_download_link = nil
 local current_etag = nil
 local current_phase = nil         -- "extracting", "uploading", "processing"
 local current_progress = 0
+local last_logged_progress = 0
 local current_upload_size_mb = 0
 local current_upload_pct = 0
 local current_extraction_pct = 0
@@ -63,10 +64,11 @@ local backend_poll_timer = nil
 local has_file_poll_timer = nil
 
 local log_buffer = {}
-local LOG_BUFFER_MAX = 100
+local LOG_BUFFER_MAX = 500
 mp.enable_messages("info")
 mp.register_event("log-message", function(e)
-    table.insert(log_buffer, string.format("[%s] %s: %s", e.level, e.prefix, e.text:gsub("\n$", "")))
+    local timestamp = os.date("%H:%M:%S")
+    table.insert(log_buffer, string.format("[%s][%s] %s: %s", timestamp, e.level, e.prefix, e.text:gsub("\n$", "")))
     if #log_buffer > LOG_BUFFER_MAX then table.remove(log_buffer, 1) end
 end)
 
@@ -83,6 +85,7 @@ local HAS_FILE_POLL_INTERVAL = 10.0
 local S3_POLL_INTERVAL = 10.0
 local BACKEND_POLL_INTERVAL = 60.0
 local INITIAL_POLL_DELAY = 30.0
+local PROGRESS_LOG_THRESHOLD = 3
 local HEALTH_ENDPOINT = "/v1/health/"
 local get_audio_format
 local function get_audio_content_type(work_dir)
@@ -128,6 +131,11 @@ local function strip_extension(filename)
     return filename:match("(.+)%.[^.]+$") or filename
 end
 
+local function set_phase(phase)
+    current_phase = phase
+    if phase then msg.warn("Phase: " .. phase) end
+end
+
 local function extract_uuid(subtitle_id)
     return subtitle_id:match("subtitle_request:([^:]+)") or subtitle_id
 end
@@ -140,6 +148,8 @@ local function make_curl_args(extra)
 end
 
 local function report_error(error_name, error_message, context)
+    msg.error("report_error: " .. error_name .. " - " .. error_message ..
+        " context=" .. utils.format_json(context or {}))
     local endpoint = "https://" .. cfg.domain .. "/v1/report-error/"
     local payload = utils.format_json({
         name = error_name,
@@ -286,8 +296,10 @@ end
 local function load_subtitle_file_into_mpv(sub_file)
     local sub, id = check_sub_track_exists(sub_file)
     if not sub then
+        msg.warn("Loading new subtitle: " .. sub_file)
         mp.commandv('sub-add', sub_file)
     else
+        msg.warn("Reloading subtitle track " .. id .. ": " .. sub_file)
         mp.commandv('sub-reload', id)
     end
 end
@@ -392,6 +404,8 @@ local function load_config_from_file()
         cfg.application_id = nexus_utils.generate_uuid()
     end
     cfg.application_type = nexus_utils.is_iina() and "iina-nexus-plugin" or "nexus-mpv"
+    msg.warn("Config loaded: model=" .. cfg.model .. " lang=" .. cfg.subtitle_language_code ..
+        " auto_transcribe=" .. tostring(cfg.auto_transcribe_new_files) .. " app_type=" .. cfg.application_type)
 end
 
 load_config_from_file()
@@ -418,6 +432,8 @@ local function save_config_to_file()
 end
 
 local function save_config_key(config_key, new_value)
+    local log_display_value = config_key == "api_key" and "(redacted)" or tostring(new_value)
+    msg.warn("Config changed: " .. config_key .. "=" .. log_display_value)
     cfg[config_key] = new_value
     save_config_to_file()
     return true
@@ -576,7 +592,8 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
     }, function(success, res)
         if not success or not res or res.status ~= 0 then
             msg.error("API network error: " .. method .. " " .. endpoint)
-            msg.error("  curl exit code: " .. tostring(res and res.status))
+            msg.error("  curl exit code: " .. tostring(res and res.status) ..
+                " stderr: " .. tostring(res and res.stderr):sub(1, 200))
             if not silent then
                 local err = "Network error, check connection"
                 current_last_error = err
@@ -626,6 +643,7 @@ local HEALTH_RETRY_INTERVAL = 30.0
 local function check_api_health(callback, silent)
     api_call("GET", HEALTH_ENDPOINT, nil, function(data, err)
         if err then
+            msg.warn("Health check failed: " .. tostring(err))
             local was_healthy = api_healthy ~= false
             api_healthy = false
             if was_healthy and not silent then
@@ -638,6 +656,7 @@ local function check_api_health(callback, silent)
             end
             if callback then callback(false) end
         else
+            msg.warn("Health check passed")
             api_healthy = true
             if health_check_timer then
                 health_check_timer:kill()
@@ -648,6 +667,7 @@ local function check_api_health(callback, silent)
     end, true, true)
 end
 
+msg.warn("Running startup health check")
 check_api_health()
 
 
@@ -967,6 +987,7 @@ end
 
 
 local function stop_all_timers()
+    msg.warn("Stopping all polling timers")
     if has_file_poll_timer then has_file_poll_timer:kill(); has_file_poll_timer = nil end
     if s3_poll_timer then s3_poll_timer:kill(); s3_poll_timer = nil end
     if backend_poll_timer then backend_poll_timer:kill(); backend_poll_timer = nil end
@@ -1026,14 +1047,17 @@ end
 
 local function validate_api_key()
     if cfg.api_key == "" or cfg.api_key == "NOT_SET" then
+        msg.warn("API key not set, skipping validation")
         api_key_valid = false
         update_main_menu()
         return
     end
     api_call("GET", "/v1/user/validate/", nil, function(data, err)
         if err == "http_401" then
+            msg.warn("API key validation failed: invalid key")
             api_key_valid = false
         elseif data and data.valid then
+            msg.warn("API key validated successfully")
             api_key_valid = true
             fetch_user_info()
         end
@@ -1042,6 +1066,7 @@ local function validate_api_key()
 end
 
 local function download_subtitles(download_url, output_path, callback)
+    msg.warn("Downloading subtitles to: " .. output_path)
     mp.command_native_async({
         name = "subprocess",
         capture_stdout = true,
@@ -1058,6 +1083,8 @@ local function download_subtitles(download_url, output_path, callback)
             current_last_error = err
             sync_runtime_state()
             mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+        else
+            msg.warn("Subtitle download complete: " .. output_path)
         end
         callback(ok)
     end)
@@ -1088,6 +1115,7 @@ local subtitles_file = nil
 
 local function start_s3_polling()
     if not current_download_link then return end
+    msg.warn("Starting S3 polling (interval: " .. S3_POLL_INTERVAL .. "s)")
 
     s3_poll_timer = mp.add_periodic_timer(S3_POLL_INTERVAL, function()
         if not transcription_active then
@@ -1095,9 +1123,9 @@ local function start_s3_polling()
             return
         end
 
-        msg.warn("S3 poll: checking for subtitle updates...")
         check_s3_etag(current_download_link, function(etag)
             if not etag or etag == current_etag then return end
+            msg.warn("S3 ETag changed, downloading update")
             current_etag = etag
             download_subtitles(current_download_link, subtitles_file, function(success)
                 if success and file_exists(subtitles_file) then
@@ -1110,6 +1138,7 @@ local function start_s3_polling()
 end
 
 local function start_backend_polling()
+    msg.warn("Starting backend polling (interval: " .. BACKEND_POLL_INTERVAL .. "s)")
     backend_poll_timer = mp.add_periodic_timer(BACKEND_POLL_INTERVAL, function()
         if not transcription_active then
             stop_all_timers()
@@ -1122,11 +1151,18 @@ local function start_backend_polling()
                 stop_all_timers()
                 return
             end
-            if err then return end
+            if err then
+                msg.warn("Backend poll error: " .. tostring(err))
+                return
+            end
 
             if data then
-                msg.warn("Backend poll: progress=" .. tostring(data.progress) .. ", status=" .. tostring(data.status))
-                current_progress = data.progress or 0
+                local new_progress = data.progress or 0
+                if new_progress - last_logged_progress >= PROGRESS_LOG_THRESHOLD then
+                    msg.warn("Backend poll: progress=" .. tostring(new_progress) .. "%")
+                    last_logged_progress = new_progress
+                end
+                current_progress = new_progress
                 update_main_menu()
             end
 
@@ -1156,6 +1192,7 @@ local function start_backend_polling()
 end
 
 local function start_has_file_polling()
+    msg.warn("Starting has_file polling (interval: " .. HAS_FILE_POLL_INTERVAL .. "s)")
     has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, function()
         if not transcription_active then
             stop_all_timers()
@@ -1168,10 +1205,17 @@ local function start_has_file_polling()
                 stop_all_timers()
                 return
             end
-            if err then return end
+            if err then
+                msg.warn("File poll error: " .. tostring(err))
+                return
+            end
             if data then
-                msg.warn("Poll data: progress=" .. tostring(data.progress) .. ", status=" .. tostring(data.status))
-                current_progress = data.progress or 0
+                local new_progress = data.progress or 0
+                if new_progress - last_logged_progress >= PROGRESS_LOG_THRESHOLD then
+                    msg.warn("Poll: progress=" .. tostring(new_progress) .. "%")
+                    last_logged_progress = new_progress
+                end
+                current_progress = new_progress
                 update_main_menu()
             end
 
@@ -1238,6 +1282,8 @@ local function start_ai_transcription()
     file_duration = mp.get_property_number('duration')
     transcription_active = true
     current_last_error = nil
+    last_logged_progress = 0
+    msg.warn("start_ai_transcription: path=" .. path .. " duration=" .. tostring(file_duration) .. "s")
 
     local work_dir = get_work_dir()
     platform.current.create_directory(work_dir)
@@ -1288,11 +1334,13 @@ local function start_ai_transcription()
 
         upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
             if start_err or not start_data then
+                msg.warn("upload_start failed: " .. tostring(start_err))
                 transcription_active = false
                 return
             end
 
             local upload_id = start_data.upload_id
+            msg.warn("upload_start success: upload_id=" .. upload_id)
             local presigned_url = start_data.presigned_url
 
             upload_to_s3(presigned_url, audio_file, work_dir, function(s3_success)
@@ -1307,6 +1355,7 @@ local function start_ai_transcription()
 
                 upload_finish(upload_id, function(finish_data, finish_err)
                     if finish_err then
+                        msg.warn("upload_finish failed: " .. tostring(finish_err))
                         transcription_active = false
                         return
                     end
@@ -1314,6 +1363,7 @@ local function start_ai_transcription()
                     msg.warn("Upload complete: " .. upload_id)
                     submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
                         if sr_err or not sr_data then
+                            msg.warn("submit_subtitle_request failed: " .. tostring(sr_err))
                             transcription_active = false
                             return
                         end
@@ -1324,7 +1374,8 @@ local function start_ai_transcription()
                         state.subtitle_id = current_subtitle_id
                         set_state(work_dir, state)
 
-                        current_phase = "processing"
+                        set_phase("processing")
+                        msg.warn("subtitle_id=" .. current_subtitle_id)
                         current_progress = sr_data.progress or 0
                         update_main_menu()
                         mp.osd_message("Processing...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
@@ -1345,13 +1396,13 @@ local function start_ai_transcription()
         mp.osd_message("Starting subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
         if file_exists(audio_file) then
             msg.warn("Using cached audio: " .. audio_file)
-            current_phase = "uploading"
+            set_phase("uploading")
             proceed_with_upload()
         else
             local fmt = get_audio_format(work_dir)
             local temp_audio = audio_file:gsub("%." .. fmt .. "$", ".tmp." .. fmt)
             msg.warn("Extracting audio to: " .. temp_audio)
-            current_phase = "extracting"
+            set_phase("extracting")
             update_main_menu()
             extract_full_audio(video_path, temp_audio, function(extract_success)
                 if not extract_success or not file_exists(temp_audio) then
@@ -1364,13 +1415,13 @@ local function start_ai_transcription()
                     return
                 end
                 os.rename(temp_audio, audio_file)
-                current_phase = "uploading"
+                set_phase("uploading")
                 proceed_with_upload()
             end)
         end
     end
 
-    current_phase = "checking_existing"
+    set_phase("checking_existing")
     if cfg.ignore_community_subs then
         msg.warn("Ignoring community subs, proceeding with transcription")
         proceed_with_transcription()
@@ -1379,6 +1430,7 @@ local function start_ai_transcription()
     mp.osd_message("Checking for existing subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     local file_hash = nexus_utils.get_file_hash(video_path)
     if not file_hash then
+        msg.warn("Could not compute file hash, proceeding with transcription")
         proceed_with_transcription()
         return
     end
@@ -1386,8 +1438,14 @@ local function start_ai_transcription()
     msg.warn("Searching for existing subtitles: hash=" .. file_hash ..
         " model=" .. cfg.model .. " lang=" .. cfg.subtitle_language_code)
     search_existing_subtitles(file_hash, function(search_data, search_err)
-        msg.warn("Search result: " .. utils.format_json(search_data or {}))
+        if search_err then
+            msg.warn("Cache search error: " .. tostring(search_err) .. ", proceeding with transcription")
+            proceed_with_transcription()
+            return
+        end
+        msg.warn("Cache search result: " .. utils.format_json(search_data or {}))
         if not search_data or not search_data.subtitle_ids or not search_data.subtitle_ids[1] then
+            msg.warn("No cached subtitles found, proceeding with transcription")
             proceed_with_transcription()
             return
         end
@@ -1439,7 +1497,7 @@ local function start_ai_transcription()
                     state.is_demo = is_demo
                     set_state(work_dir, state)
                     transcription_active = false
-                    current_phase = nil
+                    set_phase(nil)
                     update_main_menu()
 
                     if is_demo then
@@ -1464,8 +1522,9 @@ local function stop_ai_transcription()
     msg.warn("Stopping transcription...")
     stop_all_timers()
     transcription_active = false
-    current_phase = nil
+    set_phase(nil)
     current_progress = 0
+    last_logged_progress = 0
     sync_runtime_state()
 
     msg.warn("AI transcription stopped")
@@ -1527,6 +1586,8 @@ local function init_state(base_dir)
 
     local is_processing = state.subtitle_id and state.subtitle_status ~= "COMPLETED"
     local should_auto_start = cfg.auto_transcribe_new_files and not state.subtitle_id
+    msg.warn("init_state decision: is_processing=" .. tostring(is_processing) ..
+        " should_auto_start=" .. tostring(should_auto_start) .. " path=" .. path)
 
     if is_processing or should_auto_start then
         start_ai_transcription()
@@ -1547,8 +1608,9 @@ local function reset_state()
     current_subtitle_id = nil
     current_download_link = nil
     current_etag = nil
-    current_phase = nil
+    set_phase(nil)
     current_progress = 0
+    last_logged_progress = 0
     sync_runtime_state()
     mp.osd_message("State reset", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     msg.warn("State reset (deleted dir): " .. work_dir)
@@ -1844,14 +1906,17 @@ end
 local device_auth_timer = nil
 
 local function start_device_login()
+    msg.warn("Starting device login flow")
     mp.osd_message("Starting login...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     api_call("POST", "/v1/device/authorize/", {
         application_type = cfg.application_type,
         application_id = cfg.application_id
     }, function(data, err)
         if err or not data or not data.user_code then
+            msg.warn("Device login failed to get user code")
             return
         end
+        msg.warn("Device login: got user_code=" .. data.user_code)
         pending_device_code = data.user_code
         sync_runtime_state()
         mp.osd_message("Opening browser in " .. BROWSER_OPEN_DELAY_S .. "s...\n\nEnter code: " .. data.user_code, 999)
@@ -1863,6 +1928,7 @@ local function start_device_login()
         local expires_at = os.time() + (data.expires_in or 900)
         device_auth_timer = mp.add_periodic_timer(poll_interval, function()
             if os.time() > expires_at then
+                msg.warn("Device login expired")
                 device_auth_timer:kill()
                 device_auth_timer = nil
                 pending_device_code = nil
@@ -1872,6 +1938,7 @@ local function start_device_login()
             end
             api_call("POST", "/v1/device/token/", { device_code = device_code }, function(token_data)
                 if token_data and token_data.api_key then
+                    msg.warn("Device login successful, API key received")
                     device_auth_timer:kill()
                     device_auth_timer = nil
                     pending_device_code = nil
@@ -1885,6 +1952,7 @@ local function start_device_login()
 end
 
 local function logout()
+    msg.warn("User logout")
     save_config_key("api_key", "")
     api_key_valid = false
     user_plan = nil
@@ -1979,6 +2047,8 @@ mp.add_key_binding("Ctrl+t", "start-ai-transcription", start_ai_transcription)
 mp.add_key_binding("Ctrl+Shift+s", "stop-ai-transcription", stop_ai_transcription)
 
 mp.register_event("file-loaded", function()
+    local path = mp.get_property("path") or "(none)"
+    msg.warn("file-loaded event: " .. path)
     if transcription_active then
         stop_ai_transcription()
     end
@@ -1988,6 +2058,7 @@ mp.register_event("file-loaded", function()
 end)
 
 mp.register_event("shutdown", function()
+    msg.warn("shutdown event: saving state")
     local vol = mp.get_property_number("volume")
     if vol then save_config_key("volume", vol) end
     transcription_active = false
