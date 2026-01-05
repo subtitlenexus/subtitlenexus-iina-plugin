@@ -667,9 +667,6 @@ local function check_api_health(callback, silent)
     end, true, true)
 end
 
-msg.warn("Running startup health check")
-check_api_health()
-
 
 local function parse_version(v)
     local out = {}
@@ -2069,3 +2066,9 @@ if not nexus_utils.is_iina() and not SKIP_AUTO_UPDATE then
     mp.register_event("start-file", on_startup_update_check)
     mp.register_event("idle", on_startup_update_check)
 end
+
+
+
+msg.warn("Running startup health check")
+check_api_health()
+validate_api_key()
