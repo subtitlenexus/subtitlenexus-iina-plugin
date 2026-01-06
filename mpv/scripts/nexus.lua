@@ -383,9 +383,9 @@ end
 
 local function get_logs_dir()
     if cfg.base_dir and cfg.base_dir ~= "" then
-        return utils.join_path(cfg.base_dir, "logs")
+        return normalize_path(utils.join_path(cfg.base_dir, "logs"))
     end
-    return mp.command_native({ "expand-path", "~~/logs" })
+    return normalize_path(mp.command_native({ "expand-path", "~~/logs" }))
 end
 
 local function cleanup_old_logs()
@@ -405,7 +405,7 @@ local function get_log_file()
     if log_file_handle then return log_file_handle end
     local logs_dir = get_logs_dir()
     platform.current.create_directory(logs_dir)
-    log_file_path = utils.join_path(logs_dir, os.date("%Y-%m-%d_%H-%M-%S") .. ".log")
+    log_file_path = normalize_path(utils.join_path(logs_dir, os.date("%Y-%m-%d_%H-%M-%S") .. ".log"))
     log_file_handle = io.open(log_file_path, "a")
     return log_file_handle
 end
