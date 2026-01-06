@@ -1001,7 +1001,8 @@ local function submit_subtitle_request(upload_id, audio_language, callback)
         audio_language = audio_language,
         subtitle_language = cfg.subtitle_language_code,
         version = cfg.model,
-        pipeline_version = 2
+        pipeline_version = 2,
+        application_type = cfg.application_type
     }, callback)
 end
 
