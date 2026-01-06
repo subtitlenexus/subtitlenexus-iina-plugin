@@ -65,12 +65,6 @@ local has_file_poll_timer = nil
 
 local log_buffer = {}
 local LOG_BUFFER_MAX = 500
-mp.enable_messages("info")
-mp.register_event("log-message", function(e)
-    local timestamp = os.date("%H:%M:%S")
-    table.insert(log_buffer, string.format("[%s][%s] %s: %s", timestamp, e.level, e.prefix, e.text:gsub("\n$", "")))
-    if #log_buffer > LOG_BUFFER_MAX then table.remove(log_buffer, 1) end
-end)
 
 local update_main_menu
 local sync_runtime_state
@@ -99,6 +93,8 @@ local STAGING_DIR = normalize_path(utils.join_path(MPV_CONFIG_DIR, "nexus-update
 local PENDING_VERSION_FILE = normalize_path(utils.join_path(STAGING_DIR, "VERSION"))
 local SKIP_AUTO_UPDATE = false
 local update_check_in_progress = false
+local log_file_handle = nil
+local log_file_path = nil
 
 local SUPPORTED_AUDIO_LANGUAGES = {
     Language.ENGLISH,
@@ -197,6 +193,10 @@ local function get_ffmpeg_path()
         local userLocalAppData = os.getenv("LOCALAPPDATA")
         if userLocalAppData then
             table.insert(ffmpeg_candidates, userLocalAppData .. "\\Programs\\mpv\\ffmpeg\\bin\\ffmpeg.exe")
+        end
+        local mpv_dir = mp.command_native({"expand-path", "~~exe_dir/"})
+        if mpv_dir then
+            table.insert(ffmpeg_candidates, mpv_dir .. "\\ffmpeg\\bin\\ffmpeg.exe")
         end
     elseif is_macos then
         ffmpeg_candidates = {
@@ -379,6 +379,35 @@ local function get_config_path()
         path = utils.join_path(mp.command_native({ "expand-path", "~~/script-opts" }), CONFIG_FILENAME)
     end
     return normalize_path(path)
+end
+
+local function get_logs_dir()
+    if cfg.base_dir and cfg.base_dir ~= "" then
+        return utils.join_path(cfg.base_dir, "logs")
+    end
+    return mp.command_native({ "expand-path", "~~/logs" })
+end
+
+local function cleanup_old_logs()
+    local logs_dir = get_logs_dir()
+    local files = utils.readdir(logs_dir) or {}
+    local cutoff = os.time() - (7 * 24 * 60 * 60)
+    for _, file in ipairs(files) do
+        if file:match("^%d%d%d%d%-%d%d%-%d%d_.+%.log$") then
+            local path = utils.join_path(logs_dir, file)
+            local info = utils.file_info(path)
+            if info and info.mtime and info.mtime < cutoff then os.remove(path) end
+        end
+    end
+end
+
+local function get_log_file()
+    if log_file_handle then return log_file_handle end
+    local logs_dir = get_logs_dir()
+    platform.current.create_directory(logs_dir)
+    log_file_path = utils.join_path(logs_dir, os.date("%Y-%m-%d_%H-%M-%S") .. ".log")
+    log_file_handle = io.open(log_file_path, "a")
+    return log_file_handle
 end
 
 
@@ -1283,6 +1312,8 @@ local function start_ai_transcription()
     msg.warn("start_ai_transcription: path=" .. path .. " duration=" .. tostring(file_duration) .. "s")
 
     local work_dir = get_work_dir()
+    local fmt = get_audio_format(work_dir)
+    local file_hash_sha256 = get_or_compute_file_hash_sha256(path)
     platform.current.create_directory(work_dir)
 
     subtitles_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
@@ -1319,7 +1350,8 @@ local function start_ai_transcription()
     set_state(work_dir, state)
 
     local fname_base = strip_extension(fname)
-    local audio_file = utils.join_path(work_dir, fname_base .. "." .. get_audio_format(work_dir))
+    local audio_name = "nexus_" .. (file_hash_sha256 or fname_base) .. "." .. fmt
+    local audio_file = utils.join_path(platform.current.temp_dir, audio_name)
 
     local function proceed_with_upload()
         local file_size = get_file_size(audio_file)
@@ -1327,7 +1359,7 @@ local function start_ai_transcription()
         update_main_menu()
         msg.warn("Audio ready: " .. file_size .. " bytes")
         local audio_lang = get_audio_language(work_dir)
-        local audio_filename = fname_base .. "." .. get_audio_format(work_dir)
+        local audio_filename = fname_base .. "." .. fmt
 
         upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
             if start_err or not start_data then
@@ -1396,7 +1428,6 @@ local function start_ai_transcription()
             set_phase("uploading")
             proceed_with_upload()
         else
-            local fmt = get_audio_format(work_dir)
             local temp_audio = audio_file:gsub("%." .. fmt .. "$", ".tmp." .. fmt)
             msg.warn("Extracting audio to: " .. temp_audio)
             set_phase("extracting")
@@ -1636,14 +1667,12 @@ local function open_config_file()
     platform.current.open(get_config_path())
 end
 
-local function export_logs()
-    local log_path = utils.join_path(get_work_dir(), "nexus-logs.txt")
-    local f = io.open(log_path, "w")
-    if f then
-        f:write(table.concat(log_buffer, "\n"))
-        f:close()
-        platform.current.open(log_path)
-    end
+local function open_logs_dir()
+    platform.current.open(get_logs_dir())
+end
+
+local function open_logs_file()
+    if log_file_path then platform.current.open(log_file_path) end
 end
 
 local SUPPORTED_MODELS = {
@@ -1681,7 +1710,8 @@ local function build_logs_submenu()
         end
     end
     table.insert(items, { separator = true, selectable = false })
-    table.insert(items, { title = "Export All Logs", icon = "save", value = cmd("export-logs") })
+    table.insert(items, { title = "Open Logs File", icon = "description", value = cmd("open-logs-file") })
+    table.insert(items, { title = "Open Logs Dir", icon = "folder", value = cmd("open-logs-dir") })
     return { title = "Recent Logs", icon = "article", items = items }
 end
 
@@ -2031,17 +2061,34 @@ mp.register_script_message("reset-state", reset_state)
 mp.register_script_message("open-subtitle-url", open_subtitle_url)
 mp.register_script_message("open-work-dir", open_work_dir)
 mp.register_script_message("open-config-file", open_config_file)
-mp.register_script_message("export-logs", export_logs)
+mp.register_script_message("open-logs-dir", open_logs_dir)
+mp.register_script_message("open-logs-file", open_logs_file)
 mp.register_script_message("open-url", function(url) platform.current.open(url) end)
 mp.register_script_message("open-premium-page", function()
     platform.current.open("https://" .. cfg.domain_web .. "/products/pricing/")
 end)
 mp.register_script_message("start-device-login", start_device_login)
 mp.register_script_message("logout", logout)
+mp.register_script_message("test-error", function() (nil)() end)
 
 mp.add_key_binding("b", "open-nexus-menu", show_main_menu)
 mp.add_key_binding("Ctrl+t", "start-ai-transcription", start_ai_transcription)
 mp.add_key_binding("Ctrl+Shift+s", "stop-ai-transcription", stop_ai_transcription)
+
+mp.register_event("log-message", function(e)
+    pcall(function()
+        local timestamp = os.date("%H:%M:%S")
+        local text = (e.text or ""):gsub("\n$", "")
+        local line = string.format("[%s][%s] %s: %s", timestamp, e.level or "?", e.prefix or "?", text)
+        table.insert(log_buffer, line)
+        if #log_buffer > LOG_BUFFER_MAX then table.remove(log_buffer, 1) end
+        local f = get_log_file()
+        if f then
+            f:write(line .. "\n")
+            f:flush()
+        end
+    end)
+end)
 
 mp.register_event("file-loaded", function()
     local path = mp.get_property("path") or "(none)"
@@ -2060,6 +2107,8 @@ mp.register_event("shutdown", function()
     if vol then save_config_key("volume", vol) end
     transcription_active = false
     stop_all_timers()
+    if log_file_handle then log_file_handle:close() end
+    cleanup_old_logs()
 end)
 
 if not nexus_utils.is_iina() and not SKIP_AUTO_UPDATE then
@@ -2069,6 +2118,7 @@ end
 
 
 
+mp.enable_messages("info")
 msg.warn("Running startup health check")
 check_api_health()
 validate_api_key()
