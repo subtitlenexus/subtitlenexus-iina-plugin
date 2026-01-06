@@ -149,8 +149,12 @@ event.on("iina.window-loaded", () => {
         mpv.command('script-message', ['reset-state']);
     });
 
-    sidebar.onMessage("export-logs", () => {
-        mpv.command('script-message', ['export-logs']);
+    sidebar.onMessage("open-logs-dir", () => {
+        mpv.command('script-message', ['open-logs-dir']);
+    });
+
+    sidebar.onMessage("open-logs-file", () => {
+        mpv.command('script-message', ['open-logs-file']);
     });
 
     sidebar.onMessage("open-premium-page", () => {

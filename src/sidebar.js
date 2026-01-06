@@ -255,8 +255,12 @@ function resetState() {
     iina.postMessage('reset-state', {});
 }
 
-function copyLogs() {
-    iina.postMessage('export-logs', {});
+function openLogsDir() {
+    iina.postMessage('open-logs-dir', {});
+}
+
+function openLogsFile() {
+    iina.postMessage('open-logs-file', {});
 }
 
 function startLogin() {

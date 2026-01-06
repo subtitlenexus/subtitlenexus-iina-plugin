@@ -1581,6 +1581,8 @@ local function init_state(base_dir)
 
     if base_dir and base_dir ~= "" then
         cfg.base_dir = base_dir
+        if log_file_handle then log_file_handle:close() end
+        log_file_handle, log_file_path = nil, nil
     end
 
     load_config_from_file()
