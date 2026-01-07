@@ -14,6 +14,7 @@ local function init_cfg()
         auto_purchase_past_daily_limit = false,
         ignore_community_subs = false,
         audio_format = "auto",  -- "auto", "mp3", or "wav"
+        subtitle_visibility = "PUBLIC",  -- "PUBLIC" or "UNLISTED"
         volume = 50,
         application_id = ""
     }

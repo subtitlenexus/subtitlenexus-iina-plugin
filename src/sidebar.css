@@ -31,6 +31,9 @@ button:hover {
 button.secondary {
     background: #555;
     color: #fff;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
 }
 button.secondary:hover {
     background: #666;
@@ -187,7 +190,7 @@ input::placeholder {
     align-items: center;
     gap: 10px;
     width: fit-content;
-    margin-top: 10px;
+    margin: 4px 0;
 }
 .checkbox-section input[type="checkbox"] {
     cursor: pointer;

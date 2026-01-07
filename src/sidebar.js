@@ -229,6 +229,12 @@ function saveIgnoreCommunity() {
     iina.postMessage('set-ignore-community', { enabled: checkbox.checked });
 }
 
+function saveSubtitleVisibility() {
+    const select = document.getElementById('subtitleVisibility');
+    logToIINA("[FE] Subtitle visibility: " + select.value);
+    iina.postMessage('set-subtitle-visibility', { visibility: select.value });
+}
+
 function saveAudioFormat() {
     const select = document.getElementById('audioFormat');
     logToIINA("[FE] Audio format: " + select.value);
@@ -435,6 +441,11 @@ window.addEventListener('DOMContentLoaded', () => {
         const ignoreCommunityCheckbox = document.getElementById('ignoreCommunity');
         if (ignoreCommunityCheckbox) {
             ignoreCommunityCheckbox.checked = config.ignore_community_subs === true;
+        }
+
+        const subtitleVisibilitySelect = document.getElementById('subtitleVisibility');
+        if (subtitleVisibilitySelect && config.subtitle_visibility) {
+            subtitleVisibilitySelect.value = config.subtitle_visibility;
         }
 
         const audioFormatSelect = document.getElementById('audioFormat');

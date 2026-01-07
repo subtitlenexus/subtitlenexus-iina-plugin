@@ -112,6 +112,11 @@ event.on("iina.window-loaded", () => {
         mpv.command('script-message', ['set-config-ignore-community', data.enabled ? "true" : "false"]);
     });
 
+    sidebar.onMessage("set-subtitle-visibility", (data) => {
+        log.log("✓ Set subtitle-visibility: " + data.visibility);
+        mpv.command('script-message', ['set-config-subtitle-visibility', data.visibility]);
+    });
+
     sidebar.onMessage("set-audio-format", (data) => {
         log.log("✓ Set audio-format: " + data.format);
         mpv.command('script-message', ['set-config-audio-format', data.format]);

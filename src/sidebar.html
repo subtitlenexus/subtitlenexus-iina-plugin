@@ -173,31 +173,43 @@
 
 <div id="advancedView" class="view">
     <h2>Advanced</h2>
-    <div class="section checkbox-section" style="margin-bottom: 15px;">
+    <div class="checkbox-section">
         <input type="checkbox" id="autoPurchase" onchange="saveAutoPurchase()" />
         <label for="autoPurchase">Buy Existing Subs if Past Daily Limit</label>
     </div>
-    <div class="section checkbox-section" style="margin-bottom: 15px;">
+    <div class="checkbox-section">
         <input type="checkbox" id="ignoreCommunity" onchange="saveIgnoreCommunity()" />
         <label for="ignoreCommunity">Ignore Community Subs</label>
     </div>
+    <div class="section" style="margin-top: 12px; margin-bottom: 15px;">
+        <label for="subtitleVisibility" style="display: block; margin-bottom: 5px;">Default Subtitle Visibility:</label>
+        <select id="subtitleVisibility" onchange="saveSubtitleVisibility()">
+            <option value="PUBLIC">Public (searchable by anyone)</option>
+            <option value="UNLISTED">Unlisted (hidden from web search)</option>
+        </select>
+    </div>
     <div class="section" style="margin-bottom: 15px;">
-        <label for="audioFormat" style="display: block; margin-bottom: 5px;">Audio Format</label>
+        <label for="audioFormat" style="display: block; margin-bottom: 5px;">Audio Format:</label>
         <select id="audioFormat" onchange="saveAudioFormat()">
             <option value="auto">Auto (auto pick best for request)</option>
             <option value="mp3">MP3 (ok quality, fast upload)</option>
             <option value="wav">WAV (high quality, slow upload)</option>
         </select>
     </div>
-    <button onclick="openWorkDir()">Open Work Dir</button>
-    <button onclick="openConfigFile()">Open Config File</button>
+    <div style="display: flex; gap: 8px;">
+        <button class="secondary" onclick="openWorkDir()">Open Work Dir</button>
+        <button class="secondary" onclick="openConfigFile()">Open Config File</button>
+    </div>
     <button onclick="resetState()" class="danger-btn">Reset File State</button>
 
     <hr class="section-divider">
-    <h3 style="margin: 10px 0 5px;">Recent Logs</h3>
+    <h3 style="margin: 10px 0 10px;">Recent Logs</h3>
     <div id="logsPreview" class="logs-preview"></div>
-    <button onclick="openLogsFile()">Open Logs File</button>
-    <button onclick="openLogsDir()">Open Logs Dir</button>
+    <div style="display: flex; gap: 8px;">
+        <button class="secondary" onclick="openLogsFile()">Open Logs File</button>
+        <button class="secondary" onclick="openLogsDir()">Open Logs Dir</button>
+    </div>
+    <hr class="section-divider">
     <button class="secondary" onclick="showMainView()">Back</button>
 </div>
 

@@ -425,6 +425,7 @@ local function load_config_from_file()
             cfg.auto_purchase_past_daily_limit = data.auto_purchase_past_daily_limit
         end
         if data.ignore_community_subs ~= nil then cfg.ignore_community_subs = data.ignore_community_subs end
+        if data.subtitle_visibility then cfg.subtitle_visibility = data.subtitle_visibility end
         if data.audio_format then cfg.audio_format = data.audio_format end
         if data.volume then cfg.volume = data.volume end
         if data.application_id then cfg.application_id = data.application_id end
@@ -453,6 +454,7 @@ local function save_config_to_file()
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
         auto_purchase_past_daily_limit = cfg.auto_purchase_past_daily_limit,
         ignore_community_subs = cfg.ignore_community_subs,
+        subtitle_visibility = cfg.subtitle_visibility,
         audio_format = cfg.audio_format,
         volume = cfg.volume,
         application_id = cfg.application_id
@@ -1002,7 +1004,8 @@ local function submit_subtitle_request(upload_id, audio_language, callback)
         subtitle_language = cfg.subtitle_language_code,
         version = cfg.model,
         pipeline_version = 2,
-        application_type = cfg.application_type
+        application_type = cfg.application_type,
+        visibility = cfg.subtitle_visibility
     }, callback)
 end
 
@@ -1699,6 +1702,19 @@ local function cmd(name, ...)
     return args
 end
 
+local function build_choice_submenu(opts)
+    local items = {}
+    for _, c in ipairs(opts.choices) do
+        local icon = c.value == opts.current and "radio_button_checked" or "radio_button_unchecked"
+        table.insert(items, { title = c.label, icon = icon, value = cmd(opts.message, c.value), keep_open = true })
+    end
+    local display = opts.current
+    for _, c in ipairs(opts.choices) do
+        if c.value == opts.current and c.short then display = c.short break end
+    end
+    return { title = opts.title, icon = opts.icon, hint = display, items = items }
+end
+
 local function build_logs_submenu()
     local items = {}
     local recent = {}
@@ -1725,11 +1741,20 @@ local function build_advanced_submenu()
     local ign_val = cfg.ignore_community_subs and "false" or "true"
     local adv_items = {
         { title = "Buy Existing Subs if Past Daily Limit", icon = pur_icon,
-            value = cmd("set-config-auto-purchase", pur_val) },
+            value = cmd("set-config-auto-purchase", pur_val), keep_open = true },
         { title = "Ignore Community Subs", icon = ign_icon,
-            value = cmd("set-config-ignore-community", ign_val) },
-        { title = "Audio Format: " .. (cfg.audio_format or "auto"):upper(), icon = "audio_file",
-            value = cmd("toggle-audio-format"), keep_open = true },
+            value = cmd("set-config-ignore-community", ign_val), keep_open = true },
+        build_choice_submenu({ title = "Default Subtitle Visibility", icon = "visibility",
+            current = cfg.subtitle_visibility, message = "set-config-subtitle-visibility", choices = {
+            { value = "PUBLIC", label = "Public (searchable by anyone)", short = "Public" },
+            { value = "UNLISTED", label = "Unlisted (hidden from web search)", short = "Unlisted" },
+        }}),
+        build_choice_submenu({ title = "Audio Format", icon = "audio_file",
+            current = cfg.audio_format or "auto", message = "set-config-audio-format", choices = {
+            { value = "auto", label = "Auto (auto pick best)", short = "Auto" },
+            { value = "mp3", label = "MP3 (ok quality, fast)", short = "MP3" },
+            { value = "wav", label = "WAV (high quality, slow)", short = "WAV" },
+        }}),
         { separator = true, selectable = false },
         { title = "Open Work Dir", icon = "folder_open", value = cmd("open-work-dir") },
         { title = "Open Config File", icon = "description", value = cmd("open-config-file") },
@@ -1788,14 +1813,30 @@ local function build_main_menu_items()
             muted = true, selectable = false })
     end
 
-    local audio_lang_hint = get_language_name(get_audio_language(get_work_dir()))
-    table.insert(items, { title = "Audio Language", icon = "record_voice_over",
-        hint = audio_lang_hint, value = cmd("open-audio-language-menu") })
-    local lang_hint = get_language_name(cfg.subtitle_language_code)
-    table.insert(items, { title = "Subtitle Language", icon = "language",
-        hint = lang_hint, value = cmd("open-subtitle-language-menu") })
-    table.insert(items, { title = "Model", icon = "smart_toy",
-        hint = cfg.model, value = cmd("open-model-menu") })
+    local audio_lang_choices = {}
+    for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
+        if type(lang) == "table" then
+            table.insert(audio_lang_choices, { value = lang.code, label = lang.name, short = lang.name })
+        end
+    end
+    table.insert(items, build_choice_submenu({ title = "Audio Language", icon = "record_voice_over",
+        current = get_audio_language(get_work_dir()), message = "select-audio-language",
+        choices = audio_lang_choices }))
+    local sub_lang_choices = {}
+    for _, lang in pairs(SUPPORTED_SUBTITLE_LANGUAGES) do
+        if type(lang) == "table" then
+            table.insert(sub_lang_choices, { value = lang.code, label = lang.name, short = lang.name })
+        end
+    end
+    table.insert(items, build_choice_submenu({ title = "Subtitle Language", icon = "language",
+        current = cfg.subtitle_language_code, message = "select-subtitle-language",
+        choices = sub_lang_choices }))
+    local model_choices = {}
+    for _, m in ipairs(SUPPORTED_MODELS) do
+        table.insert(model_choices, { value = m.code, label = m.name, short = m.name })
+    end
+    table.insert(items, build_choice_submenu({ title = "Model", icon = "smart_toy",
+        current = cfg.model, message = "select-model", choices = model_choices }))
     local api_hint = cfg.api_key:sub(1, 8) .. "..."
     table.insert(items, { title = "API Key", icon = "key",
         hint = api_hint, value = cmd("show-api-menu") })
@@ -1807,7 +1848,7 @@ local function build_main_menu_items()
     local auto_icon = cfg.auto_transcribe_new_files and "check_box" or "check_box_outline_blank"
     local auto_val = cfg.auto_transcribe_new_files and "false" or "true"
     table.insert(items, { title = "Auto Transcribe New Files", icon = auto_icon,
-        value = cmd("set-config-auto-transcribe", auto_val) })
+        value = cmd("set-config-auto-transcribe", auto_val), keep_open = true })
 
     table.insert(items, { separator = true, selectable = false })
 
@@ -2012,6 +2053,7 @@ mp.register_script_message("select-model", function(model_code)
     cfg.model = model_code
     save_config_key("model", model_code)
     mp.osd_message("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    update_main_menu()
 end)
 mp.register_script_message("show-api-menu",        show_api_key_menu)
 mp.register_script_message("set-api-key",          set_api_key)
@@ -2042,16 +2084,18 @@ mp.register_script_message("set-config-model", function(value)
 end)
 mp.register_script_message("set-config-auto-transcribe", function(value)
     save_config_key("auto_transcribe_new_files", value == "true")
+    update_main_menu()
 end)
 mp.register_script_message("set-config-auto-purchase", function(value)
     save_config_key("auto_purchase_past_daily_limit", value == "true")
+    update_main_menu()
 end)
 mp.register_script_message("set-config-ignore-community", function(value)
     save_config_key("ignore_community_subs", value == "true")
+    update_main_menu()
 end)
-mp.register_script_message("toggle-audio-format", function()
-    local cycle = { auto = "mp3", mp3 = "wav", wav = "auto" }
-    save_config_key("audio_format", cycle[cfg.audio_format] or "wav")
+mp.register_script_message("set-config-subtitle-visibility", function(value)
+    save_config_key("subtitle_visibility", value)
     update_main_menu()
 end)
 mp.register_script_message("set-config-audio-format", function(value)
