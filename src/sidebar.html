@@ -21,10 +21,26 @@
 
 <div id="mainView" class="view active">
     
+    <div id="mainBackendDown" style="display: none;">
+        <p id="backendDownMessage" class="last-error" style="margin-bottom: 15px;">Unable to connect to Subtitle Nexus</p>
+        <button onclick="retryConnection()">Retry Connection</button>
+        <hr class="section-divider">
+        <button onclick="showAdvancedView()" class="setting-btn">
+            <span class="setting-label">Advanced</span>
+            <span class="setting-value">→</span>
+        </button>
+    </div>
+
+    
     <div id="mainLoggedOut">
         <p style="color: #888; margin-bottom: 15px;">Sign in to use Subtitle Nexus</p>
         <button onclick="startLogin()">Login with Browser</button>
         <button onclick="showApiView()" class="secondary">Set API Key Manually</button>
+        <hr class="section-divider">
+        <button onclick="showAdvancedView()" class="setting-btn">
+            <span class="setting-label">Advanced</span>
+            <span class="setting-value">→</span>
+        </button>
     </div>
 
     

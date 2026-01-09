@@ -58,6 +58,7 @@ local user_name = nil
 local api_key_valid = nil
 local pending_device_code = nil
 local api_healthy = nil
+local internet_ok = nil
 
 local s3_poll_timer = nil
 local backend_poll_timer = nil
@@ -486,6 +487,8 @@ sync_runtime_state = function()
     runtime_state.user_plan = user_plan
     runtime_state.user_name = user_name
     runtime_state.api_key_valid = api_key_valid
+    runtime_state.api_healthy = api_healthy
+    runtime_state.internet_ok = internet_ok
     runtime_state.pending_device_code = pending_device_code
     runtime_state.logs = log_buffer
     mp.set_property_native("user-data/nexus/state", runtime_state)
@@ -696,6 +699,27 @@ local function check_api_health(callback, silent)
             if callback then callback(true) end
         end
     end, true, true)
+end
+
+local function check_internet(callback)
+    msg.warn("Checking internet connectivity...")
+    mp.command_native_async({
+        name = "subprocess",
+        playback_only = false,
+        capture_stdout = true,
+        capture_stderr = true,
+        args = make_curl_args({"-s", "-L", "--max-time", "5", "-w", "%{http_code}",
+            "-o", platform.current.null_device, "https://1.1.1.1"})
+    }, function(success, res)
+        local http_code = res and res.stdout and res.stdout:match("(%d+)")
+        if not success or not http_code then
+            msg.warn("Internet check failed: status=" .. tostring(res and res.status) ..
+                " stderr=" .. tostring(res and res.stderr))
+        end
+        msg.warn("Internet check: http_code=" .. tostring(http_code))
+        internet_ok = http_code and tonumber(http_code) and tonumber(http_code) < 400
+        if callback then callback(internet_ok) end
+    end)
 end
 
 
@@ -1145,6 +1169,7 @@ local subtitles_file = nil
 
 local function start_s3_polling()
     if not current_download_link then return end
+    if s3_poll_timer then s3_poll_timer:kill() end
     msg.warn("Starting S3 polling (interval: " .. S3_POLL_INTERVAL .. "s)")
 
     s3_poll_timer = mp.add_periodic_timer(S3_POLL_INTERVAL, function()
@@ -1168,6 +1193,7 @@ local function start_s3_polling()
 end
 
 local function start_backend_polling()
+    if backend_poll_timer then backend_poll_timer:kill() end
     msg.warn("Starting backend polling (interval: " .. BACKEND_POLL_INTERVAL .. "s)")
     backend_poll_timer = mp.add_periodic_timer(BACKEND_POLL_INTERVAL, function()
         if not transcription_active then
@@ -1222,6 +1248,7 @@ local function start_backend_polling()
 end
 
 local function start_has_file_polling()
+    if has_file_poll_timer then has_file_poll_timer:kill() end
     msg.warn("Starting has_file polling (interval: " .. HAS_FILE_POLL_INTERVAL .. "s)")
     has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, function()
         if not transcription_active then
@@ -1771,6 +1798,18 @@ end
 local function build_main_menu_items()
     local items = {}
 
+    if api_healthy == false then
+        table.insert(items, { title = "Unable to connect to Subtitle Nexus", icon = "error",
+            muted = true, selectable = false })
+        table.insert(items, { title = "Retry Connection", icon = "refresh",
+            value = cmd("retry-connection") })
+        table.insert(items, { separator = true, selectable = false })
+        table.insert(items, { title = "Check for Updates", icon = "update",
+            value = cmd("check-for-updates") })
+        table.insert(items, build_advanced_submenu())
+        return items
+    end
+
     if api_key_valid ~= true then
         table.insert(items, { title = "Login", icon = "login", value = cmd("start-device-login") })
         table.insert(items, { separator = true, selectable = false })
@@ -2062,6 +2101,25 @@ mp.register_script_message("open-menu",            show_main_menu)
 mp.register_script_message("start-ai-transcription-with-config", start_ai_transcription_with_config)
 mp.register_script_message("init-state", init_state)
 mp.register_script_message("check-for-updates", function() check_for_update(false) end)
+mp.register_script_message("retry-connection", function()
+    mp.osd_message("Retrying connection...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    check_internet(function()
+        check_api_health(function(healthy)
+            sync_runtime_state()
+            if healthy then
+                mp.osd_message("Connected!", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                validate_api_key()
+            else
+                if internet_ok then
+                    mp.osd_message("Subtitle Nexus is down. Check subtitlenexus.com", ERROR_MESSAGE_DISPLAY_TIME_S)
+                else
+                    mp.osd_message("No internet connection", ERROR_MESSAGE_DISPLAY_TIME_S)
+                end
+                update_main_menu()
+            end
+        end)
+    end)
+end)
 mp.register_script_message("update-config", update_config)
 
 mp.register_script_message("set-config-api-key", function(value)

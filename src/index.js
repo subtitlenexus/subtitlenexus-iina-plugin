@@ -189,6 +189,12 @@ event.on("iina.window-loaded", () => {
         mpv.command('script-message', ['logout']);
         syncToSidebar(100);
     });
+
+    sidebar.onMessage("retry-connection", () => {
+        log.log("✓ Retry connection");
+        mpv.command('script-message', ['retry-connection']);
+        syncToSidebar(2000);
+    });
 });
 
 function onFileOrWindowLoaded() {

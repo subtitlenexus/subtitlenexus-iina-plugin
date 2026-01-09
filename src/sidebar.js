@@ -279,16 +279,47 @@ function doLogout() {
     iina.postMessage('logout', {});
 }
 
+function retryConnection() {
+    logToIINA("[FE] Retrying connection");
+    const msgEl = document.getElementById('backendDownMessage');
+    if (msgEl) msgEl.textContent = "Retrying connection...";
+    iina.postMessage('retry-connection', {});
+}
+
 function updateAccountUI(state) {
     const loggedOutSection = document.getElementById('loggedOutSection');
     const loggedInSection = document.getElementById('loggedInSection');
+    const mainBackendDown = document.getElementById('mainBackendDown');
     const mainLoggedOut = document.getElementById('mainLoggedOut');
     const mainLoggedIn = document.getElementById('mainLoggedIn');
     const userNameEl = document.getElementById('currentUserName');
     const mainAccountStatus = document.getElementById('mainAccountStatus');
 
+    const apiHealthy = state && state.api_healthy;
     const apiKeyValid = state && state.api_key_valid;
     const userName = state && state.user_name;
+
+    if (apiHealthy === false) {
+        if (mainBackendDown) mainBackendDown.style.display = 'block';
+        if (mainLoggedOut) mainLoggedOut.style.display = 'none';
+        if (mainLoggedIn) mainLoggedIn.style.display = 'none';
+        if (loggedOutSection) loggedOutSection.style.display = 'none';
+        if (loggedInSection) loggedInSection.style.display = 'none';
+        const msgEl = document.getElementById('backendDownMessage');
+        const internetOk = state && state.internet_ok;
+        if (msgEl) {
+            if (internetOk === true) {
+                msgEl.textContent = "Subtitle Nexus is down. Check subtitlenexus.com";
+            } else if (internetOk === false) {
+                msgEl.textContent = "No internet connection";
+            } else {
+                msgEl.textContent = "Unable to connect to Subtitle Nexus";
+            }
+        }
+        return;
+    }
+
+    if (mainBackendDown) mainBackendDown.style.display = 'none';
 
     if (apiKeyValid) {
         if (loggedOutSection) loggedOutSection.style.display = 'none';
