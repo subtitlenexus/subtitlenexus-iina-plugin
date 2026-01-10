@@ -1712,8 +1712,8 @@ local function open_logs_file()
 end
 
 local SUPPORTED_MODELS = {
-    { code = "vega-preview", name = "vega-preview" },
-    { code = "lulu-2504", name = "lulu-2504" },
+    { code = "vega-preview", name = "vega-preview (standard)" },
+    { code = "lulu-2504", name = "lulu (best)" },
 }
 
 local function get_language_name(code)

@@ -7,7 +7,7 @@ local function init_cfg()
         domain_web = "subtitlenexus.com",
         subtitle_language_code = "en",
         default_audio_language_code = "ja",
-        model = "vega-preview",
+        model = "lulu-2504",
         base_dir = "",
         advanced_mode = false,
         auto_transcribe_new_files = false,
