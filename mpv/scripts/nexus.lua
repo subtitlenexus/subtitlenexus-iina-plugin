@@ -841,12 +841,15 @@ local function stage_scripts_update(scripts_url, version)
     mp.osd_message("Downloading update v" .. version .. "...", 2)
     local result = mp.command_native({
         name = "subprocess",
-        args = make_curl_args({"-fsSL", "-o", zip_path, scripts_url}),
-        capture_stdout = true
+        playback_only = false,
+        args = make_curl_args({"-fsSL", "--max-time", "120", "-o", zip_path, scripts_url}),
+        capture_stdout = true,
+        capture_stderr = true
     })
 
     if not result or result.status ~= 0 then
-        msg.error("[update] Failed to download scripts")
+        msg.error("[update] Failed to download scripts: status=" .. tostring(result and result.status) ..
+            " stderr=" .. tostring(result and result.stderr))
         platform.current.cleanup_directory(STAGING_DIR)
         return false
     end
