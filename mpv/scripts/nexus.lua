@@ -107,6 +107,11 @@ local SUPPORTED_SUBTITLE_LANGUAGES = {
 }
 
 
+local function osd_msg(text, duration)
+    mp.osd_message(text, duration or DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    msg.warn("[OSD] " .. text)
+end
+
 local function is_protocol(path)
     return type(path) == 'string' and (path:find('^%a[%w.+-]-://') ~= nil or path:find('^%a[%w.+-]-:%?') ~= nil)
 end
@@ -234,7 +239,7 @@ local function get_ffmpeg_path()
     local error_msg = "Subtitles unavailable: FFmpeg not found"
     current_last_error = error_msg
     sync_runtime_state()
-    mp.osd_message(error_msg, ERROR_MESSAGE_DISPLAY_TIME_S)
+    osd_msg(error_msg, ERROR_MESSAGE_DISPLAY_TIME_S)
     report_error("ffmpeg_not_found", error_msg, {
         is_windows = is_windows,
         is_macos = is_macos,
@@ -511,7 +516,7 @@ local function extract_full_audio(input_path, output_path, callback)
     local audio_stream_index = (current_audio_id and current_audio_id > 0) and (current_audio_id - 1) or 0
 
     if platform.current.is_network_path(input_path) then
-        mp.osd_message("Network file detected - audio processing may be slow.", LONG_MESSAGE_DISPLAY_TIME_S)
+        osd_msg("Network file detected - audio processing may be slow.", LONG_MESSAGE_DISPLAY_TIME_S)
         msg.warn("Network path detected: " .. input_path)
     end
 
@@ -556,7 +561,7 @@ local function extract_full_audio(input_path, output_path, callback)
         local info = utils.file_info(output_path)
         if info and info.size and expected_size > 0 then
             current_extraction_pct = math.min(99, math.floor(info.size / expected_size * 100))
-            mp.osd_message(string.format("Extracting audio: %d%%", current_extraction_pct), 1)
+            osd_msg(string.format("Extracting audio: %d%%", current_extraction_pct), 1)
             sync_runtime_state()
             update_main_menu()
         end
@@ -595,7 +600,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
 
     if not skip_auth and (cfg.api_key == "" or cfg.api_key == "NOT_SET") then
         if not silent then
-            mp.osd_message("Please login first", ERROR_MESSAGE_DISPLAY_TIME_S)
+            osd_msg("Please login first", ERROR_MESSAGE_DISPLAY_TIME_S)
         end
         callback(nil, "no_auth")
         return
@@ -632,7 +637,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
                 local err = "Network error, check connection"
                 current_last_error = err
                 sync_runtime_state()
-                mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+                osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
             end
             callback(nil, "network_error")
             return
@@ -663,7 +668,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
             if not silent then
                 current_last_error = detail
                 sync_runtime_state()
-                mp.osd_message("Error: " .. detail, ERROR_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Error: " .. detail, ERROR_MESSAGE_DISPLAY_TIME_S)
             end
             callback(nil, "http_" .. tostring(http_code))
         end
@@ -681,7 +686,7 @@ local function check_api_health(callback, silent)
             local was_healthy = api_healthy ~= false
             api_healthy = false
             if was_healthy and not silent then
-                mp.osd_message("Nexus API unavailable. Check subtitlenexus.com.", LONG_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Nexus API unavailable. Check subtitlenexus.com.", LONG_MESSAGE_DISPLAY_TIME_S)
             end
             if not health_check_timer then
                 health_check_timer = mp.add_periodic_timer(HEALTH_RETRY_INTERVAL, function()
@@ -827,7 +832,7 @@ local function install_staged_update()
 
     platform.current.cleanup_directory(STAGING_DIR)
     if success then
-        mp.osd_message("Updated to v" .. staged_version, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+        osd_msg("Updated to v" .. staged_version, DEFAULT_MESSAGE_DISPLAY_TIME_S)
         msg.warn("[update] Installed update v" .. staged_version)
     end
     return success
@@ -838,7 +843,7 @@ local function stage_scripts_update(scripts_url, version)
     platform.current.create_directory(STAGING_DIR)
     local zip_path = utils.join_path(STAGING_DIR, "scripts.zip")
 
-    mp.osd_message("Downloading update v" .. version .. "...", 2)
+    osd_msg("Downloading update v" .. version .. "...", 2)
     local result = mp.command_native({
         name = "subprocess",
         playback_only = false,
@@ -867,7 +872,7 @@ local function stage_scripts_update(scripts_url, version)
         pf:close()
     end
 
-    mp.osd_message("Update v" .. version .. " ready, will install on relaunch", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Update v" .. version .. " ready, will install on relaunch", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     return true
 end
 
@@ -889,14 +894,14 @@ local function check_for_update(silent)
 
         if not is_newer_version(cur, latest) then
             if not silent then
-                mp.osd_message("You are up to date! v" .. cur, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("You are up to date! v" .. cur, DEFAULT_MESSAGE_DISPLAY_TIME_S)
             end
             return
         end
 
         if has_staged_update(latest) then
             if not silent then
-                mp.osd_message("Update v" .. latest .. " ready, will install on relaunch",
+                osd_msg("Update v" .. latest .. " ready, will install on relaunch",
                     DEFAULT_MESSAGE_DISPLAY_TIME_S)
             end
             return
@@ -906,7 +911,7 @@ local function check_for_update(silent)
             cfg.application_type, platform.current.name, dist_type)
         api_call("GET", dl_url, nil, function(dl_data, dl_err)
             if dl_err or not dl_data or not dl_data.download_url then
-                mp.osd_message("Update v" .. latest .. " available - download at subtitlenexus.com",
+                osd_msg("Update v" .. latest .. " available - download at subtitlenexus.com",
                     DEFAULT_MESSAGE_DISPLAY_TIME_S * 2)
                 return
             end
@@ -943,7 +948,7 @@ local function upload_start(file_name, file_size, duration_seconds, audio_langua
 end
 
 local function upload_to_s3(presigned_url, file_path, work_dir, callback)
-    mp.osd_message("Uploading audio...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Uploading audio...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     local file_size = get_file_size(file_path)
     msg.warn(string.format("Uploading to S3: %s (%.1f MB)", file_path, nexus_utils.bytes_to_mb(file_size)))
     local start_time = mp.get_time()
@@ -975,7 +980,7 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
                 local pct = content:match("(%d+)%.?%d*%%[%s]*$")
                 if pct then
                     current_upload_pct = math.min(99, tonumber(pct))
-                    mp.osd_message(string.format("Uploading: %d%%", current_upload_pct), 1)
+                    osd_msg(string.format("Uploading: %d%%", current_upload_pct), 1)
                     sync_runtime_state()
                     update_main_menu()
                 end
@@ -1070,7 +1075,7 @@ local function handle_poll_failure(error_type)
     local err = "Subtitle generation failed"
     current_last_error = err
     sync_runtime_state()
-    mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
     stop_all_timers()
     clear_failed_state()
     transcription_active = false
@@ -1139,7 +1144,7 @@ local function download_subtitles(download_url, output_path, callback)
             local err = "Subtitle download failed"
             current_last_error = err
             sync_runtime_state()
-            mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+            osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
         else
             msg.warn("Subtitle download complete: " .. output_path)
         end
@@ -1227,7 +1232,7 @@ local function start_backend_polling()
 
             if data and data.status == "COMPLETED" then
                 msg.warn("Transcription completed")
-                mp.osd_message("Subtitles ready!", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Subtitles ready!", DEFAULT_MESSAGE_DISPLAY_TIME_S)
                 stop_all_timers()
                 mark_completed()
                 check_s3_etag(current_download_link, function(etag)
@@ -1334,7 +1339,7 @@ local function start_ai_transcription()
         local err = "Cannot transcribe streams"
         current_last_error = err
         sync_runtime_state()
-        mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+        osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
         return
     end
 
@@ -1373,7 +1378,7 @@ local function start_ai_transcription()
         if file_exists(subtitles_file) then
             load_subtitle_file_into_mpv(subtitles_file)
         end
-        mp.osd_message("Resuming subtitle request...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+        osd_msg("Resuming subtitle request...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
         start_has_file_polling()
         return
     end
@@ -1411,7 +1416,7 @@ local function start_ai_transcription()
                     local err = "Upload to S3 failed"
                     current_last_error = err
                     sync_runtime_state()
-                    mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+                    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
                     transcription_active = false
                     return
                 end
@@ -1441,7 +1446,7 @@ local function start_ai_transcription()
                         msg.warn("subtitle_id=" .. current_subtitle_id)
                         current_progress = sr_data.progress or 0
                         update_main_menu()
-                        mp.osd_message("Processing...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                        osd_msg("Processing...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
 
                         msg.warn("Waiting " .. INITIAL_POLL_DELAY .. "s before starting has_file polling...")
                         mp.add_timeout(INITIAL_POLL_DELAY, function()
@@ -1456,7 +1461,7 @@ local function start_ai_transcription()
     end
 
     local function proceed_with_transcription()
-        mp.osd_message("Starting subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+        osd_msg("Starting subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
         if file_exists(audio_file) then
             msg.warn("Using cached audio: " .. audio_file)
             set_phase("uploading")
@@ -1471,7 +1476,7 @@ local function start_ai_transcription()
                     local err = "Audio extraction failed"
                     current_last_error = err
                     sync_runtime_state()
-                    mp.osd_message(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+                    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
                     os.remove(temp_audio)
                     transcription_active = false
                     return
@@ -1489,7 +1494,7 @@ local function start_ai_transcription()
         proceed_with_transcription()
         return
     end
-    mp.osd_message("Checking for existing subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Checking for existing subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     local file_hash = nexus_utils.get_file_hash(video_path)
     if not file_hash then
         msg.warn("Could not compute file hash, proceeding with transcription")
@@ -1520,7 +1525,7 @@ local function start_ai_transcription()
                 if dl_err == "http_402" then
                     if cfg.auto_purchase_past_daily_limit then
                         msg.warn("Download limit reached, purchasing subtitle...")
-                        mp.osd_message("Purchasing subtitle...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                        osd_msg("Purchasing subtitle...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
                         purchase_subtitle(cached_id, function(_, purchase_err)
                             if purchase_err then
                                 proceed_with_transcription()
@@ -1563,9 +1568,9 @@ local function start_ai_transcription()
                     update_main_menu()
 
                     if is_demo then
-                        mp.osd_message("Demo subtitle loaded (10 min preview)", ERROR_MESSAGE_DISPLAY_TIME_S)
+                        osd_msg("Demo subtitle loaded (10 min preview)", ERROR_MESSAGE_DISPLAY_TIME_S)
                     else
-                        mp.osd_message("Loaded existing user subtitles", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                        osd_msg("Loaded existing user subtitles", DEFAULT_MESSAGE_DISPLAY_TIME_S)
                     end
                 end)
             end)
@@ -1590,7 +1595,7 @@ local function stop_ai_transcription()
     sync_runtime_state()
 
     msg.warn("AI transcription stopped")
-    mp.osd_message("Live subtitles disabled", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Live subtitles disabled", DEFAULT_MESSAGE_DISPLAY_TIME_S)
 end
 
 
@@ -1676,7 +1681,7 @@ local function reset_state()
     current_progress = 0
     last_logged_progress = 0
     sync_runtime_state()
-    mp.osd_message("State reset", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("State reset", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     msg.warn("State reset (deleted dir): " .. work_dir)
 end
 
@@ -1998,21 +2003,21 @@ local function set_api_key()
             local trimmed_input = user_input and user_input:match("^%s*(.-)%s*$") or ""
 
             if trimmed_input == "" then
-                mp.osd_message("API key cannot be empty.", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("API key cannot be empty.", DEFAULT_MESSAGE_DISPLAY_TIME_S)
                 input.terminate()
                 return
             end
 
             cfg.api_key = trimmed_input
             save_config_key("api_key", cfg.api_key)
-            mp.osd_message("API key saved", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            osd_msg("API key saved", DEFAULT_MESSAGE_DISPLAY_TIME_S)
             input.terminate()
         end,
     })
 end
 
 local function show_api_key()
-    mp.osd_message("API key: " .. cfg.api_key:sub(1, 8), DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("API key: " .. cfg.api_key:sub(1, 8), DEFAULT_MESSAGE_DISPLAY_TIME_S)
 end
 
 
@@ -2020,7 +2025,7 @@ local device_auth_timer = nil
 
 local function start_device_login()
     msg.warn("Starting device login flow")
-    mp.osd_message("Starting login...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Starting login...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     api_call("POST", "/v1/device/authorize/", {
         application_type = cfg.application_type,
         application_id = cfg.application_id
@@ -2032,7 +2037,7 @@ local function start_device_login()
         msg.warn("Device login: got user_code=" .. data.user_code)
         pending_device_code = data.user_code
         sync_runtime_state()
-        mp.osd_message("Opening browser in " .. BROWSER_OPEN_DELAY_S .. "s...\n\nEnter code: " .. data.user_code, 999)
+        osd_msg("Opening browser in " .. BROWSER_OPEN_DELAY_S .. "s...\n\nEnter code: " .. data.user_code, 999)
         mp.add_timeout(BROWSER_OPEN_DELAY_S, function()
             platform.current.open(data.verification_url)
         end)
@@ -2046,7 +2051,7 @@ local function start_device_login()
                 device_auth_timer = nil
                 pending_device_code = nil
                 sync_runtime_state()
-                mp.osd_message("Login expired. Try again.", ERROR_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Login expired. Try again.", ERROR_MESSAGE_DISPLAY_TIME_S)
                 return
             end
             api_call("POST", "/v1/device/token/", { device_code = device_code }, function(token_data)
@@ -2056,7 +2061,7 @@ local function start_device_login()
                     device_auth_timer = nil
                     pending_device_code = nil
                     save_config_key("api_key", token_data.api_key)
-                    mp.osd_message("Login successful!", LONG_MESSAGE_DISPLAY_TIME_S)
+                    osd_msg("Login successful!", LONG_MESSAGE_DISPLAY_TIME_S)
                     validate_api_key()
                 end
             end, true, true)
@@ -2070,14 +2075,14 @@ local function logout()
     api_key_valid = false
     user_plan = nil
     user_name = nil
-    mp.osd_message("Logged out", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Logged out", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     update_main_menu()
 end
 
 
 mp.register_script_message("select-audio-language", function(lang_code)
     set_audio_language(get_work_dir(), lang_code)
-    mp.osd_message("Audio language set to: " .. get_language_name(lang_code), DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Audio language set to: " .. get_language_name(lang_code), DEFAULT_MESSAGE_DISPLAY_TIME_S)
     update_main_menu()
 end)
 mp.register_script_message("select-subtitle-language", function(lang_code)
@@ -2085,7 +2090,7 @@ mp.register_script_message("select-subtitle-language", function(lang_code)
     cfg.subtitle_language_code = language.code
     save_config_key("subtitle_language_code", language.code)
 
-    mp.osd_message("Subtitle language set to: " .. language.name, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Subtitle language set to: " .. language.name, DEFAULT_MESSAGE_DISPLAY_TIME_S)
 end)
 
 mp.register_script_message("open-audio-language-menu", show_audio_language_menu)
@@ -2094,7 +2099,7 @@ mp.register_script_message("open-model-menu",      show_model_select_menu)
 mp.register_script_message("select-model", function(model_code)
     cfg.model = model_code
     save_config_key("model", model_code)
-    mp.osd_message("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
     update_main_menu()
 end)
 mp.register_script_message("show-api-menu",        show_api_key_menu)
@@ -2105,18 +2110,18 @@ mp.register_script_message("start-ai-transcription-with-config", start_ai_transc
 mp.register_script_message("init-state", init_state)
 mp.register_script_message("check-for-updates", function() check_for_update(false) end)
 mp.register_script_message("retry-connection", function()
-    mp.osd_message("Retrying connection...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Retrying connection...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     check_internet(function()
         check_api_health(function(healthy)
             sync_runtime_state()
             if healthy then
-                mp.osd_message("Connected!", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Connected!", DEFAULT_MESSAGE_DISPLAY_TIME_S)
                 validate_api_key()
             else
                 if internet_ok then
-                    mp.osd_message("Subtitle Nexus is down. Check subtitlenexus.com", ERROR_MESSAGE_DISPLAY_TIME_S)
+                    osd_msg("Subtitle Nexus is down. Check subtitlenexus.com", ERROR_MESSAGE_DISPLAY_TIME_S)
                 else
-                    mp.osd_message("No internet connection", ERROR_MESSAGE_DISPLAY_TIME_S)
+                    osd_msg("No internet connection", ERROR_MESSAGE_DISPLAY_TIME_S)
                 end
                 update_main_menu()
             end
