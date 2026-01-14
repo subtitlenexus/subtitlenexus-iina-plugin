@@ -103,7 +103,10 @@ local SUPPORTED_AUDIO_LANGUAGES = {
 }
 
 local SUPPORTED_SUBTITLE_LANGUAGES = {
+    Language.CHINESE,
     Language.ENGLISH,
+    Language.INDONESIAN,
+    Language.KOREAN,
 }
 
 
@@ -540,6 +543,7 @@ local function extract_full_audio(input_path, output_path, callback)
         "-sn",
         "-ac", "1",
         "-ar", "16000",
+        "-af", "aresample=async=1",
     }
     if fmt == "wav" then
         table.insert(ffmpeg_args, "-c:a"); table.insert(ffmpeg_args, "pcm_s16le")
@@ -1175,6 +1179,17 @@ end
 
 local subtitles_file = nil
 
+local function reload_subtitles_for_config()
+    local work_dir = get_work_dir()
+    if not work_dir then return end
+    subtitles_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
+    if file_exists(subtitles_file) then
+        load_subtitle_file_into_mpv(subtitles_file)
+    else
+        msg.warn("No subtitle file for " .. cfg.model .. "/" .. cfg.subtitle_language_code)
+    end
+end
+
 local function start_s3_polling()
     if not current_download_link then return end
     if s3_poll_timer then s3_poll_timer:kill() end
@@ -1721,12 +1736,19 @@ local SUPPORTED_MODELS = {
     { code = "lulu-2504", name = "lulu (best)" },
 }
 
+local function get_language_display(lang)
+    if lang.english_name and lang.name ~= lang.english_name then
+        return lang.name .. " (" .. lang.english_name .. ")"
+    end
+    return lang.name
+end
+
 local function get_language_name(code)
     for _, lang in pairs(SUPPORTED_SUBTITLE_LANGUAGES) do
-        if type(lang) == "table" and lang.code == code then return lang.name end
+        if type(lang) == "table" and lang.code == code then return get_language_display(lang) end
     end
     for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
-        if type(lang) == "table" and lang.code == code then return lang.name end
+        if type(lang) == "table" and lang.code == code then return get_language_display(lang) end
     end
     return code
 end
@@ -1863,7 +1885,8 @@ local function build_main_menu_items()
     local audio_lang_choices = {}
     for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
         if type(lang) == "table" then
-            table.insert(audio_lang_choices, { value = lang.code, label = lang.name, short = lang.name })
+            local display = get_language_display(lang)
+            table.insert(audio_lang_choices, { value = lang.code, label = display, short = display })
         end
     end
     table.insert(items, build_choice_submenu({ title = "Audio Language", icon = "record_voice_over",
@@ -1872,7 +1895,8 @@ local function build_main_menu_items()
     local sub_lang_choices = {}
     for _, lang in pairs(SUPPORTED_SUBTITLE_LANGUAGES) do
         if type(lang) == "table" then
-            table.insert(sub_lang_choices, { value = lang.code, label = lang.name, short = lang.name })
+            local display = get_language_display(lang)
+            table.insert(sub_lang_choices, { value = lang.code, label = display, short = display })
         end
     end
     table.insert(items, build_choice_submenu({ title = "Subtitle Language", icon = "language",
@@ -1949,7 +1973,7 @@ local function show_language_select_menu()
     for _, lang in pairs(SUPPORTED_SUBTITLE_LANGUAGES) do
         if type(lang) == "table" and lang.code and lang.name then
             table.insert(items, {
-                title = lang.name,
+                title = get_language_display(lang),
                 icon = lang.code == current and "check" or nil,
                 active = lang.code == current,
                 value = { "script-message-to", SELF, "select-subtitle-language", lang.code }
@@ -1965,7 +1989,7 @@ local function show_audio_language_menu()
     for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
         if type(lang) == "table" and lang.code and lang.name then
             table.insert(items, {
-                title = lang.name,
+                title = get_language_display(lang),
                 icon = lang.code == current and "check" or nil,
                 active = lang.code == current,
                 value = { "script-message-to", SELF, "select-audio-language", lang.code }
@@ -2085,12 +2109,18 @@ mp.register_script_message("select-audio-language", function(lang_code)
     osd_msg("Audio language set to: " .. get_language_name(lang_code), DEFAULT_MESSAGE_DISPLAY_TIME_S)
     update_main_menu()
 end)
+
 mp.register_script_message("select-subtitle-language", function(lang_code)
     local language = Language.fromCode(lang_code)
+    if not language then
+        osd_msg("Unknown language code: " .. tostring(lang_code), ERROR_MESSAGE_DISPLAY_TIME_S)
+        return
+    end
     cfg.subtitle_language_code = language.code
     save_config_key("subtitle_language_code", language.code)
-
-    osd_msg("Subtitle language set to: " .. language.name, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Subtitle language set to: " .. get_language_display(language), DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    reload_subtitles_for_config()
+    update_main_menu()
 end)
 
 mp.register_script_message("open-audio-language-menu", show_audio_language_menu)
@@ -2100,6 +2130,7 @@ mp.register_script_message("select-model", function(model_code)
     cfg.model = model_code
     save_config_key("model", model_code)
     osd_msg("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    reload_subtitles_for_config()
     update_main_menu()
 end)
 mp.register_script_message("show-api-menu",        show_api_key_menu)
