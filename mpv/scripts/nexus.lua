@@ -283,6 +283,14 @@ local function get_or_compute_file_hash_sha256(file_path)
     return hash
 end
 
+local function get_cached_audio_path(file_path, fmt)
+    local hash = get_or_compute_file_hash_sha256(file_path)
+    local _, fname = utils.split_path(file_path)
+    local fname_base = strip_extension(fname)
+    local audio_name = "nexus_" .. (hash or fname_base) .. "." .. fmt
+    return utils.join_path(platform.current.temp_dir, audio_name)
+end
+
 local function check_sub_track_exists(sub_file)
     local tracks = mp.get_property_native("track-list")
     local _, sub_title = utils.split_path(sub_file)
@@ -1399,13 +1407,12 @@ local function start_ai_transcription()
     end
 
     local _, fname = utils.split_path(path)
+    local fname_base = strip_extension(fname)
     state = get_state(work_dir)
     state.original_filename = fname
     set_state(work_dir, state)
 
-    local fname_base = strip_extension(fname)
-    local audio_name = "nexus_" .. (file_hash_sha256 or fname_base) .. "." .. fmt
-    local audio_file = utils.join_path(platform.current.temp_dir, audio_name)
+    local audio_file = get_cached_audio_path(path, fmt)
 
     local function proceed_with_upload()
         local file_size = get_file_size(audio_file)
@@ -1687,6 +1694,16 @@ end
 local function reset_state()
     local work_dir = get_work_dir()
     platform.current.cleanup_directory(work_dir)
+    local path = mp.get_property("path")
+    if path and path ~= "" then
+        local audio_file = get_cached_audio_path(path, get_audio_format(work_dir))
+        if file_exists(audio_file) then
+            os.remove(audio_file)
+            msg.warn("Deleted cached audio: " .. audio_file)
+        else
+            msg.warn("No cached audio to delete: " .. audio_file)
+        end
+    end
     stop_all_timers()
     transcription_active = false
     current_subtitle_id = nil
