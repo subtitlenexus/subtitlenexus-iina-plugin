@@ -44,6 +44,7 @@ local file_hash_sha256_map = {}
 local transcription_active = false
 
 local current_subtitle_id = nil
+local current_request_key = nil
 local current_download_link = nil
 local current_etag = nil
 local current_phase = nil         -- "extracting", "uploading", "processing"
@@ -69,6 +70,7 @@ local LOG_BUFFER_MAX = 500
 
 local update_main_menu
 local sync_runtime_state
+local start_has_file_polling
 
 local PLAN_FREE_NAME = "free"
 local DEFAULT_MESSAGE_DISPLAY_TIME_S = 2
@@ -352,10 +354,10 @@ local function get_request_key()
     return cfg.model .. ":" .. cfg.subtitle_language_code
 end
 
-local function get_state(work_dir)
+local function get_state(work_dir, request_key)
     local state_path = utils.join_path(work_dir, STATE_FILENAME)
     local all_state = nexus_utils.read_json(state_path) or {}
-    return (all_state.requests or {})[get_request_key()] or {}
+    return (all_state.requests or {})[request_key or get_request_key()] or {}
 end
 
 local function get_audio_language(work_dir)
@@ -530,13 +532,13 @@ sync_runtime_state = function()
     mp.set_property_native("user-data/nexus/state", runtime_state)
 end
 
-local function set_state(work_dir, state)
+local function set_state(work_dir, state, request_key)
     msg.warn("=== SET_STATE CALLED ===")
     platform.current.create_directory(work_dir)
     local state_path = utils.join_path(work_dir, STATE_FILENAME)
     local all_state = nexus_utils.read_json(state_path) or {}
     if not all_state.requests then all_state.requests = {} end
-    all_state.requests[get_request_key()] = state
+    all_state.requests[request_key or get_request_key()] = state
     nexus_utils.write_json(state_path, all_state)
     sync_runtime_state()
 end
@@ -1094,17 +1096,17 @@ end
 
 local function clear_failed_state()
     local work_dir = get_work_dir()
-    local state = get_state(work_dir)
+    local state = get_state(work_dir, current_request_key)
     state.subtitle_id = nil
     state.subtitle_status = nil
-    set_state(work_dir, state)
+    set_state(work_dir, state, current_request_key)
 end
 
 local function mark_completed()
     local work_dir = get_work_dir()
-    local state = get_state(work_dir)
+    local state = get_state(work_dir, current_request_key)
     state.subtitle_status = "COMPLETED"
-    set_state(work_dir, state)
+    set_state(work_dir, state, current_request_key)
 end
 
 local function handle_poll_failure(error_type)
@@ -1217,6 +1219,29 @@ local function reload_subtitles_for_config()
     local work_dir = get_work_dir()
     if not work_dir then return end
     subtitles_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
+
+    current_request_key = get_request_key()
+
+    local state = get_state(work_dir, current_request_key)
+    if state.subtitle_id and state.subtitle_status ~= "COMPLETED" then
+        msg.warn("Resuming polling for " .. current_request_key .. ": " .. state.subtitle_id)
+        stop_all_timers()
+        current_subtitle_id = state.subtitle_id
+        transcription_active = true
+        set_phase("processing")
+        start_has_file_polling()
+        osd_msg("Resuming " .. cfg.subtitle_language_code:upper() .. " subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    elseif transcription_active then
+        msg.warn("Pausing polling, switched to " .. current_request_key)
+        stop_all_timers()
+        transcription_active = false
+        current_subtitle_id = nil
+        current_download_link = nil
+        current_etag = nil
+        current_progress = 0
+        set_phase(nil)
+    end
+
     if file_exists(subtitles_file) then
         load_subtitle_file_into_mpv(subtitles_file)
     else
@@ -1304,7 +1329,7 @@ local function start_backend_polling()
     end)
 end
 
-local function start_has_file_polling()
+start_has_file_polling = function()
     if has_file_poll_timer then has_file_poll_timer:kill() end
     msg.warn("Starting has_file polling (interval: " .. HAS_FILE_POLL_INTERVAL .. "s)")
     has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, function()
@@ -1395,6 +1420,7 @@ local function start_ai_transcription()
     video_path = path
     file_duration = mp.get_property_number('duration')
     transcription_active = true
+    current_request_key = get_request_key()
     current_last_error = nil
     last_logged_progress = 0
     msg.warn("start_ai_transcription: path=" .. path .. " duration=" .. tostring(file_duration) .. "s")
@@ -1434,9 +1460,9 @@ local function start_ai_transcription()
 
     local _, fname = utils.split_path(path)
     local fname_base = strip_extension(fname)
-    state = get_state(work_dir)
+    state = get_state(work_dir, current_request_key)
     state.original_filename = fname
-    set_state(work_dir, state)
+    set_state(work_dir, state, current_request_key)
 
     local audio_file = get_cached_audio_path(path, fmt)
 
@@ -1497,13 +1523,13 @@ local function start_ai_transcription()
                 msg.warn("Subtitle request submitted: " .. current_subtitle_id)
 
                 state.subtitle_id = current_subtitle_id
-                set_state(work_dir, state)
+                set_state(work_dir, state, current_request_key)
 
                 set_phase("processing")
                 msg.warn("subtitle_id=" .. current_subtitle_id)
                 current_progress = sr_data.progress or 0
                 update_main_menu()
-                osd_msg("Submitted...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                osd_msg("Processing...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
 
                 msg.warn("Waiting " .. INITIAL_POLL_DELAY .. "s before starting has_file polling...")
                 mp.add_timeout(INITIAL_POLL_DELAY, function()
@@ -1639,7 +1665,7 @@ local function start_ai_transcription()
                     state.subtitle_id = cached_id
                     state.subtitle_status = "COMPLETED"
                     state.is_demo = is_demo
-                    set_state(work_dir, state)
+                    set_state(work_dir, state, current_request_key)
                     transcription_active = false
                     set_phase(nil)
                     update_main_menu()
@@ -1762,6 +1788,7 @@ local function reset_state()
     stop_all_timers()
     transcription_active = false
     current_subtitle_id = nil
+    current_request_key = nil
     current_download_link = nil
     current_etag = nil
     set_phase(nil)
