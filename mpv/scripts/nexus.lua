@@ -105,8 +105,11 @@ local SUPPORTED_AUDIO_LANGUAGES = {
 local SUPPORTED_SUBTITLE_LANGUAGES = {
     Language.CHINESE,
     Language.ENGLISH,
+    Language.FRENCH,
     Language.INDONESIAN,
     Language.KOREAN,
+    Language.MALAY,
+    Language.SPANISH,
 }
 
 
@@ -370,6 +373,20 @@ local function set_audio_language(work_dir, lang_code)
     sync_runtime_state()
 end
 
+local function get_upload_id(work_dir)
+    local state_path = utils.join_path(work_dir, STATE_FILENAME)
+    local all_state = nexus_utils.read_json(state_path) or {}
+    return all_state.upload_id
+end
+
+local function set_upload_id(work_dir, upload_id)
+    platform.current.create_directory(work_dir)
+    local state_path = utils.join_path(work_dir, STATE_FILENAME)
+    local all_state = nexus_utils.read_json(state_path) or {}
+    all_state.upload_id = upload_id
+    nexus_utils.write_json(state_path, all_state)
+end
+
 get_audio_format = function(work_dir)
     local fmt = cfg.audio_format or "auto"
     return fmt == "auto" and "wav" or fmt
@@ -384,6 +401,7 @@ local function sync_config()
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
         auto_purchase_past_daily_limit = cfg.auto_purchase_past_daily_limit,
         ignore_community_subs = cfg.ignore_community_subs,
+        disable_subtitle_search = cfg.disable_subtitle_search,
         audio_format = cfg.audio_format
     })
 end
@@ -442,6 +460,7 @@ local function load_config_from_file()
             cfg.auto_purchase_past_daily_limit = data.auto_purchase_past_daily_limit
         end
         if data.ignore_community_subs ~= nil then cfg.ignore_community_subs = data.ignore_community_subs end
+        if data.disable_subtitle_search ~= nil then cfg.disable_subtitle_search = data.disable_subtitle_search end
         if data.subtitle_visibility then cfg.subtitle_visibility = data.subtitle_visibility end
         if data.audio_format then cfg.audio_format = data.audio_format end
         if data.volume then cfg.volume = data.volume end
@@ -471,6 +490,7 @@ local function save_config_to_file()
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
         auto_purchase_past_daily_limit = cfg.auto_purchase_past_daily_limit,
         ignore_community_subs = cfg.ignore_community_subs,
+        disable_subtitle_search = cfg.disable_subtitle_search,
         subtitle_visibility = cfg.subtitle_visibility,
         audio_format = cfg.audio_format,
         volume = cfg.volume,
@@ -1035,6 +1055,10 @@ local function upload_finish(upload_id, callback)
     }, callback)
 end
 
+local function upload_status(upload_id, callback)
+    api_call("GET", "/v1/async-upload/av/?upload_id=" .. upload_id, nil, callback)
+end
+
 
 local function submit_subtitle_request(upload_id, audio_language, callback)
     local file_hash = get_or_compute_file_hash(video_path)
@@ -1049,7 +1073,8 @@ local function submit_subtitle_request(upload_id, audio_language, callback)
         version = cfg.model,
         pipeline_version = 2,
         application_type = cfg.application_type,
-        visibility = cfg.subtitle_visibility
+        visibility = cfg.subtitle_visibility,
+        auto_route = true
     }, callback)
 end
 
@@ -1103,8 +1128,9 @@ local function get_download_link(subtitle_id, callback)
 end
 
 local function search_existing_subtitles(file_hash, callback)
-    local endpoint = string.format("/v1/subtitle/search/?file_hash=%s&version=%s&language=%s",
-        file_hash, cfg.model, cfg.subtitle_language_code)
+    local scope = cfg.ignore_community_subs and "own" or "all"
+    local endpoint = string.format("/v1/subtitle/search/?file_hash=%s&version=%s&language=%s&scope=%s",
+        file_hash, cfg.model, cfg.subtitle_language_code, scope)
     api_call("GET", endpoint, nil, callback)
 end
 
@@ -1421,65 +1447,94 @@ local function start_ai_transcription()
         msg.warn("Audio ready: " .. file_size .. " bytes")
         local audio_lang = get_audio_language(work_dir)
         local audio_filename = fname_base .. "." .. fmt
+        local submit_and_poll
 
-        upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
-            if start_err or not start_data then
-                msg.warn("upload_start failed: " .. tostring(start_err))
-                transcription_active = false
-                return
-            end
-
-            local upload_id = start_data.upload_id
-            msg.warn("upload_start success: upload_id=" .. upload_id)
-            local presigned_url = start_data.presigned_url
-
-            upload_to_s3(presigned_url, audio_file, work_dir, function(s3_success)
-                if not s3_success then
-                    local err = "Upload to S3 failed"
-                    current_last_error = err
-                    sync_runtime_state()
-                    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+        local function do_upload()
+            upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
+                if start_err or not start_data then
+                    msg.warn("upload_start failed: " .. tostring(start_err))
                     transcription_active = false
                     return
                 end
 
-                upload_finish(upload_id, function(finish_data, finish_err)
-                    if finish_err then
-                        msg.warn("upload_finish failed: " .. tostring(finish_err))
+                local upload_id = start_data.upload_id
+                msg.warn("upload_start success: upload_id=" .. upload_id)
+
+                upload_to_s3(start_data.presigned_url, audio_file, work_dir, function(s3_success)
+                    if not s3_success then
+                        local err = "Upload to S3 failed"
+                        current_last_error = err
+                        sync_runtime_state()
+                        osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
                         transcription_active = false
                         return
                     end
 
-                    msg.warn("Upload complete: " .. upload_id)
-                    submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
-                        if sr_err or not sr_data then
-                            msg.warn("submit_subtitle_request failed: " .. tostring(sr_err))
+                    upload_finish(upload_id, function(finish_data, finish_err)
+                        if finish_err then
+                            msg.warn("upload_finish failed: " .. tostring(finish_err))
                             transcription_active = false
                             return
                         end
 
-                        current_subtitle_id = sr_data.subtitle_id
-                        msg.warn("Subtitle request submitted: " .. current_subtitle_id)
-
-                        state.subtitle_id = current_subtitle_id
-                        set_state(work_dir, state)
-
-                        set_phase("processing")
-                        msg.warn("subtitle_id=" .. current_subtitle_id)
-                        current_progress = sr_data.progress or 0
-                        update_main_menu()
-                        osd_msg("Processing...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
-
-                        msg.warn("Waiting " .. INITIAL_POLL_DELAY .. "s before starting has_file polling...")
-                        mp.add_timeout(INITIAL_POLL_DELAY, function()
-                            if transcription_active then
-                                start_has_file_polling()
-                            end
-                        end)
+                        msg.warn("Upload complete: " .. upload_id)
+                        set_upload_id(work_dir, upload_id)
+                        submit_and_poll(upload_id)
                     end)
                 end)
             end)
-        end)
+        end
+
+        submit_and_poll = function(upload_id)
+            submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
+                if sr_err or not sr_data then
+                    msg.warn("submit_subtitle_request failed: " .. tostring(sr_err))
+                    transcription_active = false
+                    return
+                end
+
+                current_subtitle_id = sr_data.subtitle_id
+                msg.warn("Subtitle request submitted: " .. current_subtitle_id)
+
+                state.subtitle_id = current_subtitle_id
+                set_state(work_dir, state)
+
+                set_phase("processing")
+                msg.warn("subtitle_id=" .. current_subtitle_id)
+                current_progress = sr_data.progress or 0
+                update_main_menu()
+                osd_msg("Submitted...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+
+                msg.warn("Waiting " .. INITIAL_POLL_DELAY .. "s before starting has_file polling...")
+                mp.add_timeout(INITIAL_POLL_DELAY, function()
+                    if transcription_active then
+                        start_has_file_polling()
+                    end
+                end)
+            end)
+        end
+
+        local cached_upload_id = get_upload_id(work_dir)
+        if cached_upload_id then
+            upload_status(cached_upload_id, function(status_data, status_err)
+                if not status_err and status_data and status_data.is_finished then
+                    osd_msg("Resuming from cached upload...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                    msg.warn("Reusing cached upload_id: " .. cached_upload_id)
+                    submit_and_poll(cached_upload_id)
+                else
+                    if status_err then
+                        msg.warn("Upload status check failed: " .. tostring(status_err))
+                    else
+                        msg.warn("Cached upload incomplete or invalid")
+                    end
+                    set_upload_id(work_dir, nil)
+                    do_upload()
+                end
+            end)
+            return
+        end
+
+        do_upload()
     end
 
     local function proceed_with_transcription()
@@ -1511,8 +1566,8 @@ local function start_ai_transcription()
     end
 
     set_phase("checking_existing")
-    if cfg.ignore_community_subs then
-        msg.warn("Ignoring community subs, proceeding with transcription")
+    if cfg.disable_subtitle_search then
+        msg.warn("Subtitle search disabled, proceeding with transcription")
         proceed_with_transcription()
         return
     end
