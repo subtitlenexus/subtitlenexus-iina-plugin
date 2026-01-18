@@ -106,12 +106,27 @@ local SUPPORTED_AUDIO_LANGUAGES = {
 
 local SUPPORTED_SUBTITLE_LANGUAGES = {
     Language.CHINESE,
+    Language.CHINESE_TW,
+    Language.CZECH,
+    Language.DUTCH,
     Language.ENGLISH,
     Language.FRENCH,
+    Language.FRENCH_CA,
+    Language.GERMAN,
     Language.INDONESIAN,
+    Language.ITALIAN,
     Language.KOREAN,
     Language.MALAY,
+    Language.POLISH,
+    Language.PORTUGUESE,
+    Language.PORTUGUESE_PT,
+    Language.RUSSIAN,
     Language.SPANISH,
+    Language.SPANISH_ES,
+    Language.TAGALOG,
+    Language.THAI,
+    Language.TURKISH,
+    Language.VIETNAMESE,
 }
 
 
