@@ -1848,6 +1848,7 @@ end
 local SUPPORTED_MODELS = {
     { code = "vega-preview", name = "vega-preview (standard)" },
     { code = "lulu-2504", name = "lulu (best)" },
+    { code = "lulu-preview-2601", name = "lulu-preview-2601" },
 }
 
 local function get_language_display(lang)
