@@ -53,6 +53,8 @@ local last_logged_progress = 0
 local current_upload_size_mb = 0
 local current_upload_pct = 0
 local current_extraction_pct = 0
+local extraction_handle = nil
+local upload_handle = nil
 local current_last_error = nil
 local user_plan = nil             -- User's subscription plan (e.g., "free", "premium")
 local user_name = nil
@@ -616,14 +618,16 @@ local function extract_full_audio(input_path, output_path, callback)
         end
     end)
 
-    mp.command_native_async({
+    extraction_handle = mp.command_native_async({
         name = "subprocess",
         capture_stdout = true,
         capture_stderr = true,
         args = ffmpeg_args
     }, function(success, res)
+        extraction_handle = nil
         progress_timer:kill()
         current_extraction_pct = 0
+        if not transcription_active then return end
         local elapsed = mp.get_time() - start_time
         if not success or (res and res.status ~= 0) then
             msg.error("FFmpeg failed: " .. (res and res.stderr or "unknown"))
@@ -851,17 +855,6 @@ local function install_staged_update()
             end
         end
     end
-    local staged_version_file = utils.join_path(STAGING_DIR, "VERSION")
-    local vf = io.open(staged_version_file, "r")
-    if vf then
-        local new_version = vf:read("*line")
-        vf:close()
-        local dst_vf = io.open(VERSION_FILE, "w")
-        if dst_vf then
-            dst_vf:write(new_version)
-            dst_vf:close()
-        end
-    end
     local staged_uosc = utils.join_path(STAGING_DIR, "script-opts/uosc.conf")
     local script_opts_dir = utils.join_path(MPV_CONFIG_DIR, "script-opts")
     local uosc_dest = utils.join_path(script_opts_dir, "uosc.conf")
@@ -879,6 +872,20 @@ local function install_staged_update()
         end
     end
 
+    if success then
+        local staged_version_file = utils.join_path(STAGING_DIR, "VERSION")
+        local vf = io.open(staged_version_file, "r")
+        if vf then
+            local new_version = vf:read("*line")
+            vf:close()
+            local dst_vf = io.open(VERSION_FILE, "w")
+            if dst_vf then
+                dst_vf:write(new_version)
+                dst_vf:close()
+            end
+        end
+    end
+
     platform.current.cleanup_directory(STAGING_DIR)
     if success then
         osd_msg("Updated to v" .. staged_version, DEFAULT_MESSAGE_DISPLAY_TIME_S)
@@ -889,6 +896,7 @@ end
 
 local function stage_scripts_update(scripts_url, version)
     msg.warn("[update] Staging scripts update v" .. version)
+    platform.current.cleanup_directory(STAGING_DIR)
     platform.current.create_directory(STAGING_DIR)
     local zip_path = utils.join_path(STAGING_DIR, "scripts.zip")
 
@@ -921,7 +929,8 @@ local function stage_scripts_update(scripts_url, version)
         pf:close()
     end
 
-    osd_msg("Update v" .. version .. " ready, will install on relaunch", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    install_staged_update()
+    osd_msg("Update v" .. version .. " ready, will apply on relaunch", DEFAULT_MESSAGE_DISPLAY_TIME_S)
     return true
 end
 
@@ -1037,14 +1046,16 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
         end)
     end
 
-    mp.command_native_async({
+    upload_handle = mp.command_native_async({
         name = "subprocess",
         capture_stdout = true,
         args = curl_args
     }, function(success, res)
+        upload_handle = nil
         if progress_timer then progress_timer:kill() end
         if progress_file then os.remove(progress_file) end
         current_upload_pct = 0
+        if not transcription_active then return end
         local elapsed = mp.get_time() - start_time
         if not success or not res then
             msg.error("S3 upload failed: curl error")
@@ -1080,6 +1091,11 @@ end
 local function submit_subtitle_request(upload_id, audio_language, callback)
     local file_hash = get_or_compute_file_hash(video_path)
     local file_hash_sha256 = get_or_compute_file_hash_sha256(video_path)
+    if type(file_hash) ~= "string" or type(file_hash_sha256) ~= "string" then
+        local err = "Cannot read file for hashing"
+        osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+        return callback(nil, err)
+    end
 
     api_call("POST", "/v1/ai/subtitle-request/", {
         upload_id = upload_id,
@@ -1103,10 +1119,13 @@ end
 
 
 local function stop_all_timers()
-    msg.warn("Stopping all polling timers")
+    msg.warn("Stopping all polling timers and subprocesses")
     if has_file_poll_timer then has_file_poll_timer:kill(); has_file_poll_timer = nil end
     if s3_poll_timer then s3_poll_timer:kill(); s3_poll_timer = nil end
     if backend_poll_timer then backend_poll_timer:kill(); backend_poll_timer = nil end
+    if extraction_handle then mp.abort_async_command(extraction_handle); extraction_handle = nil end
+    if upload_handle then mp.abort_async_command(upload_handle); upload_handle = nil end
+
 end
 
 local function clear_failed_state()
@@ -1124,15 +1143,21 @@ local function mark_completed()
     set_state(work_dir, state, current_request_key)
 end
 
+local function abort_transcription(err)
+    msg.error("Aborting: " .. tostring(err))
+    current_last_error = err
+    transcription_active = false
+    stop_all_timers()
+    set_phase(nil)
+    sync_runtime_state()
+end
+
 local function handle_poll_failure(error_type)
     msg.error("Transcription failed: " .. tostring(error_type))
-    local err = "Subtitle generation failed"
-    current_last_error = err
-    sync_runtime_state()
-    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
-    stop_all_timers()
     clear_failed_state()
-    transcription_active = false
+    local err = "Subtitle generation failed"
+    osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
+    abort_transcription(err)
 end
 
 local function poll_subtitle_status(callback)
@@ -1493,8 +1518,8 @@ local function start_ai_transcription()
         local function do_upload()
             upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
                 if start_err or not start_data then
-                    msg.warn("upload_start failed: " .. tostring(start_err))
-                    transcription_active = false
+                    osd_msg("Upload failed to start", ERROR_MESSAGE_DISPLAY_TIME_S)
+                    abort_transcription("upload_start failed: " .. tostring(start_err))
                     return
                 end
 
@@ -1503,18 +1528,15 @@ local function start_ai_transcription()
 
                 upload_to_s3(start_data.presigned_url, audio_file, work_dir, function(s3_success)
                     if not s3_success then
-                        local err = "Upload to S3 failed"
-                        current_last_error = err
-                        sync_runtime_state()
-                        osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
-                        transcription_active = false
+                        osd_msg("Upload failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                        abort_transcription("Upload to S3 failed")
                         return
                     end
 
                     upload_finish(upload_id, function(finish_data, finish_err)
                         if finish_err then
-                            msg.warn("upload_finish failed: " .. tostring(finish_err))
-                            transcription_active = false
+                            osd_msg("Upload completion failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                            abort_transcription("upload_finish failed: " .. tostring(finish_err))
                             return
                         end
 
@@ -1529,8 +1551,8 @@ local function start_ai_transcription()
         submit_and_poll = function(upload_id)
             submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
                 if sr_err or not sr_data then
-                    msg.warn("submit_subtitle_request failed: " .. tostring(sr_err))
-                    transcription_active = false
+                    osd_msg("Subtitle request failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                    abort_transcription("submit_subtitle_request failed: " .. tostring(sr_err))
                     return
                 end
 
@@ -1592,11 +1614,9 @@ local function start_ai_transcription()
             extract_full_audio(video_path, temp_audio, function(extract_success)
                 if not extract_success or not file_exists(temp_audio) then
                     local err = "Audio extraction failed"
-                    current_last_error = err
-                    sync_runtime_state()
                     osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
                     os.remove(temp_audio)
-                    transcription_active = false
+                    abort_transcription("Audio extraction failed")
                     return
                 end
                 os.rename(temp_audio, audio_file)
@@ -1704,16 +1724,13 @@ local function stop_ai_transcription()
         return
     end
 
-    msg.warn("Stopping transcription...")
-    stop_all_timers()
-    transcription_active = false
-    set_phase(nil)
+    msg.warn("Cancelling Live Subtitles...")
     current_progress = 0
     last_logged_progress = 0
-    sync_runtime_state()
+    abort_transcription(nil)
 
     msg.warn("AI transcription stopped")
-    osd_msg("Live subtitles disabled", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    osd_msg("Cancelling Live Subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
 end
 
 
@@ -1751,7 +1768,8 @@ local function init_state(base_dir)
 
     local work_dir = get_work_dir()
     msg.warn("Full work dir: " .. tostring(work_dir))
-    local state = get_state(work_dir)
+    current_request_key = get_request_key()
+    local state = get_state(work_dir, current_request_key)
     msg.warn("State from file: " .. utils.format_json(state))
     sync_runtime_state()
     msg.warn("Property user-data/nexus/state set")
@@ -1817,7 +1835,7 @@ end
 
 
 local function open_subtitle_url()
-    local state = get_state(get_work_dir())
+    local state = get_state(get_work_dir(), current_request_key)
     if state.subtitle_id then
         local uuid = extract_uuid(state.subtitle_id)
         local url = "https://" .. cfg.domain_web .. "/ai/sr/" .. uuid .. "/"
@@ -1971,10 +1989,12 @@ local function build_main_menu_items()
         local hint = current_extraction_pct > 0 and string.format("%d%%", current_extraction_pct) or nil
         table.insert(items, { title = "Extracting Audio...", icon = "hourglass_top",
             hint = hint, selectable = false })
+        table.insert(items, { title = "Cancel", icon = "close", value = cmd("stop-ai-transcription") })
     elseif transcription_active and current_phase == "uploading" then
         local title = string.format("Uploading (%.1f MB)...", current_upload_size_mb)
         local hint = current_upload_pct > 0 and string.format("%d%%", current_upload_pct) or nil
         table.insert(items, { title = title, icon = "cloud_upload", hint = hint, selectable = false })
+        table.insert(items, { title = "Cancel", icon = "close", value = cmd("stop-ai-transcription") })
     elseif is_processing then
         local pct = current_progress or 0
         local hint = pct > 0 and string.format("%d%%", pct) or nil
