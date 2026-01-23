@@ -4,11 +4,12 @@ local function createLanguageEnum(languages)
     local names = {}
 
     for key, data in pairs(languages) do
-        local code, name = data[1], data[2]
+        local code, name, english_name = data[1], data[2], data[3]
 
         local lang = setmetatable({
             code = code,
-            name = name
+            name = name,
+            english_name = english_name
         }, {
             __tostring = function(self) return self.code end,
             __eq = function(self, other)
@@ -30,24 +31,31 @@ local function createLanguageEnum(languages)
 end
 
 local Language = createLanguageEnum({
-    ARABIC      = { "ar",  "العربية" },
-    CHINESE     = { "zh",  "中文" },
-    DUTCH       = { "nl",  "Nederlands" },
-    ENGLISH     = { "en",  "English" },
-    FRENCH      = { "fr",  "Français" },
-    GERMAN      = { "de",  "Deutsch" },
-    HINDI       = { "hi",  "हिन्दी" },
-    INDONESIAN  = { "id",  "Bahasa Indonesia" },
-    ITALIAN     = { "it",  "Italiano" },
-    JAPANESE    = { "ja",  "Japanese" },
-    KOREAN      = { "ko",  "한국어" },
-    MALAY       = { "ms",  "Bahasa Melayu" },
-    PORTUGUESE  = { "pt",  "Português" },
-    RUSSIAN     = { "ru",  "Русский" },
-    SPANISH     = { "es",  "Español" },
-    THAI        = { "th",  "ไทย" },
-    TURKISH     = { "tr",  "Türkçe" },
-    VIETNAMESE  = { "vi",  "Tiếng Việt" }
+    ARABIC      = { "ar",  "العربية",        "Arabic" },
+    CHINESE     = { "zh",  "中文",            "Chinese" },
+    CHINESE_TW  = { "zh-TW", "中文(繁體)",    "Chinese (Traditional)" },
+    CZECH       = { "cs",  "Čeština",        "Czech" },
+    DUTCH       = { "nl",  "Nederlands",     "Dutch" },
+    ENGLISH     = { "en",  "English",        "English" },
+    FRENCH      = { "fr",  "Français",       "French" },
+    FRENCH_CA   = { "fr-CA", "Français (Canada)", "French (Canada)" },
+    GERMAN      = { "de",  "Deutsch",        "German" },
+    HINDI       = { "hi",  "हिन्दी",           "Hindi" },
+    INDONESIAN  = { "id",  "Bahasa Indonesia", "Indonesian" },
+    ITALIAN     = { "it",  "Italiano",       "Italian" },
+    JAPANESE    = { "ja",  "日本語",          "Japanese" },
+    KOREAN      = { "ko",  "한국어",          "Korean" },
+    MALAY       = { "ms",  "Bahasa Melayu",  "Malay" },
+    POLISH      = { "pl",  "Polski",         "Polish" },
+    PORTUGUESE  = { "pt",  "Português",      "Portuguese" },
+    PORTUGUESE_PT = { "pt-PT", "Português (Portugal)", "Portuguese (Portugal)" },
+    RUSSIAN     = { "ru",  "Русский",        "Russian" },
+    SPANISH     = { "es",  "Español",        "Spanish" },
+    SPANISH_ES  = { "es-ES", "Español (España)", "Spanish (Spain)" },
+    TAGALOG     = { "tl",  "Tagalog",        "Tagalog" },
+    THAI        = { "th",  "ไทย",            "Thai" },
+    TURKISH     = { "tr",  "Türkçe",         "Turkish" },
+    VIETNAMESE  = { "vi",  "Tiếng Việt",     "Vietnamese" }
 })
 
 return Language

@@ -3,7 +3,7 @@
   "identifier": "dev.dev.iina-nexus-plugin",
   "version": "0.0.115",
   "ghRepo": "subtitlenexus/subtitlenexus-iina-plugin",
-  "ghVersion": 53,
+  "ghVersion": 54,
   "description": "Live Transcription Plugin for IINA from Subtitle Nexus",
   "author": {
     "name": "Subtitle Nexus",
