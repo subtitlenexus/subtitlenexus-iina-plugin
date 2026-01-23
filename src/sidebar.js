@@ -198,10 +198,6 @@ function toggleTranscription() {
     }
 }
 
-function cancelTranscription() {
-    iina.postMessage('stop-transcription', {});
-}
-
 function updateStatusBadge(status) {
     const badge = document.getElementById('statusBadge');
     badge.classList.remove('not-submitted', 'processing', 'completed', 'demo');
@@ -372,10 +368,6 @@ window.addEventListener('DOMContentLoaded', () => {
             } else {
                 updateStatusBadge('not-submitted');
             }
-
-            const cancelBtn = document.getElementById("cancel-btn");
-            const showCancel = isActive && (phase === "extracting" || phase === "uploading");
-            if (cancelBtn) cancelBtn.style.display = showCancel ? "block" : "none";
 
             if (isActive && phase === "extracting") {
                 const pct = extractionPct && extractionPct > 0 ? ` (${extractionPct}%)` : "";

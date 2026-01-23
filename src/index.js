@@ -77,12 +77,6 @@ event.on("iina.window-loaded", () => {
         syncToSidebar(5000);
     });
 
-    sidebar.onMessage("stop-transcription", () => {
-        log.log("Stopping transcription...");
-        mpv.command('script-message', ['stop-ai-transcription']);
-        syncToSidebar(500);
-    });
-
     sidebar.onMessage("set-audio-language", (data) => {
         log.log("✓ Set audio language: " + data.language);
         mpv.command('script-message', ['set-audio-language', data.language]);
