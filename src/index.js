@@ -118,6 +118,11 @@ event.on("iina.window-loaded", () => {
         mpv.command('script-message', ['set-config-ignore-community', data.enabled ? "true" : "false"]);
     });
 
+    sidebar.onMessage("set-contribute-thumbnails", (data) => {
+        log.log("✓ Set contribute-thumbnails: " + data.enabled);
+        mpv.command('script-message', ['set-config-contribute-thumbnails', data.enabled ? "true" : "false"]);
+    });
+
     sidebar.onMessage("set-subtitle-visibility", (data) => {
         log.log("✓ Set subtitle-visibility: " + data.visibility);
         mpv.command('script-message', ['set-config-subtitle-visibility', data.visibility]);

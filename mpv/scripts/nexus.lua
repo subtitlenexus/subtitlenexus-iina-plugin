@@ -39,6 +39,7 @@ end
 
 local video_path = nil
 local file_duration = nil
+local subtitles_file = nil
 local file_hash_map = {}
 local file_hash_sha256_map = {}
 local transcription_active = false
@@ -420,6 +421,7 @@ local function sync_config()
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
         auto_purchase_past_daily_limit = cfg.auto_purchase_past_daily_limit,
         ignore_community_subs = cfg.ignore_community_subs,
+        contribute_thumbnails = cfg.contribute_thumbnails,
         disable_subtitle_search = cfg.disable_subtitle_search,
         audio_format = cfg.audio_format
     })
@@ -479,6 +481,7 @@ local function load_config_from_file()
             cfg.auto_purchase_past_daily_limit = data.auto_purchase_past_daily_limit
         end
         if data.ignore_community_subs ~= nil then cfg.ignore_community_subs = data.ignore_community_subs end
+        if data.contribute_thumbnails ~= nil then cfg.contribute_thumbnails = data.contribute_thumbnails end
         if data.disable_subtitle_search ~= nil then cfg.disable_subtitle_search = data.disable_subtitle_search end
         if data.subtitle_visibility then cfg.subtitle_visibility = data.subtitle_visibility end
         if data.audio_format then cfg.audio_format = data.audio_format end
@@ -509,6 +512,7 @@ local function save_config_to_file()
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
         auto_purchase_past_daily_limit = cfg.auto_purchase_past_daily_limit,
         ignore_community_subs = cfg.ignore_community_subs,
+        contribute_thumbnails = cfg.contribute_thumbnails,
         disable_subtitle_search = cfg.disable_subtitle_search,
         subtitle_visibility = cfg.subtitle_visibility,
         audio_format = cfg.audio_format,
@@ -1143,6 +1147,123 @@ local function mark_completed()
     set_state(work_dir, state, current_request_key)
 end
 
+local function capture_and_upload_thumbnails()
+    local ok, err = pcall(function()
+        msg.warn("Thumbnails: starting")
+        if not cfg.contribute_thumbnails then msg.warn("Thumbnails: skipped (disabled in settings)") return end
+        local work_dir = get_work_dir()
+        if not work_dir then msg.warn("Thumbnails: skipped (no work_dir)") return end
+        local state = get_state(work_dir, current_request_key)
+        if not state.is_own_creation then msg.warn("Thumbnails: skipped (not own creation)") return end
+        if state.thumbnails_uploaded then msg.warn("Thumbnails: skipped (already uploaded)") return end
+        if not current_subtitle_id then msg.warn("Thumbnails: skipped (no subtitle_id)") return end
+        if not subtitles_file or not file_exists(subtitles_file) then
+            msg.warn("Thumbnails: skipped (no srt file)") return
+        end
+        local duration = file_duration or mp.get_property_number("duration")
+        if not duration then msg.warn("Thumbnails: skipped (no duration)") return end
+        if duration < 60 then msg.warn("Thumbnails: skipped (duration < 60s)") return end
+
+        local sub = srt_parser.Subtitle:new(subtitles_file)
+        if not sub.events or #sub.events == 0 then msg.warn("Thumbnails: skipped (no subtitle events)") return end
+
+        local target = math.max(3, math.min(15, math.floor(duration / 720)))
+        local segment_len = duration / target
+        msg.warn(string.format("Thumbnails: duration=%.0fs, target=%d, segment=%.0fs", duration, target, segment_len))
+
+        local events = {}
+        for i = 0, target - 1 do
+            local seg_start, seg_end = i * segment_len, (i + 1) * segment_len
+            for _, ev in ipairs(sub.events) do
+                local mid = (ev.start_time + ev.end_time) / 2
+                if mid >= seg_start and mid < seg_end and #ev.text >= 20 and not ev.text:lower():find("nexus") then
+                    table.insert(events, { start = ev.start_time, fin = ev.end_time, mid = mid })
+                    break
+                end
+            end
+        end
+        if #events == 0 then msg.warn("Thumbnails: skipped (no qualifying events)") return end
+        msg.warn(string.format("Thumbnails: found %d events across %d segments", #events, target))
+
+        local tn_dir = utils.join_path(work_dir, "thumbnails")
+        platform.current.create_directory(tn_dir)
+        local video_file = mp.get_property("path")
+        if not video_file then msg.warn("Thumbnails: skipped (no video path)") return end
+        local ffmpeg = get_ffmpeg_path()
+        local paths, metadata = {}, {}
+
+        local function upload()
+            if #paths == 0 then msg.warn("Thumbnails: upload skipped (no files)") return end
+
+            msg.warn(string.format("Thumbnails: uploading %d files", #paths))
+            local image_data = {}
+            for name, meta in pairs(metadata) do
+                image_data[name] = meta
+            end
+
+            local curl_args = make_curl_args({"-s", "-X", "POST", "-w", "\n%{http_code}"})
+            table.insert(curl_args, "-H")
+            table.insert(curl_args, "X-API-Key: " .. cfg.api_key)
+            table.insert(curl_args, "-F")
+            table.insert(curl_args, "subtitle_id=" .. current_subtitle_id)
+            table.insert(curl_args, "-F")
+            table.insert(curl_args, "image_data_json=" .. utils.format_json(image_data))
+            for _, path in ipairs(paths) do
+                table.insert(curl_args, "-F")
+                table.insert(curl_args, "image_files=@" .. path)
+            end
+            table.insert(curl_args, "https://" .. cfg.domain .. "/v1/ai/subtitle-request/images/")
+
+            mp.command_native_async({
+                name = "subprocess",
+                capture_stdout = true,
+                capture_stderr = true,
+                args = curl_args
+            }, function(success, res)
+                for _, path in ipairs(paths) do os.remove(path) end
+                platform.current.cleanup_directory(tn_dir)
+                local http_code = res and res.stdout and res.stdout:match("(%d+)%s*$")
+                if success and http_code and http_code:match("^2") then
+                    msg.warn(string.format("Thumbnails: upload complete (HTTP %s)", http_code))
+                    state.thumbnails_uploaded = true
+                    set_state(work_dir, state, current_request_key)
+                else
+                    msg.error(string.format("Thumbnails: upload failed (HTTP %s, err=%s)",
+                        tostring(http_code), tostring(res and res.stderr)))
+                end
+            end)
+        end
+
+        local function capture(i)
+            if i > #events then
+                msg.warn("Thumbnails: capture complete, starting upload")
+                return upload()
+            end
+            local ev = events[i]
+            local name = string.format("%.2f-%.2f.jpg", ev.start, ev.fin)
+            local path = utils.join_path(tn_dir, name)
+            msg.warn(string.format("Thumbnails: capturing %d/%d at %.2fs", i, #events, ev.mid))
+            mp.command_native_async({
+                name = "subprocess",
+                args = {ffmpeg, "-ss", tostring(math.max(0, ev.mid - 2)), "-i", video_file,
+                    "-ss", "2", "-vframes", "1", "-q:v", "2", "-y", path}
+            }, function(success, res)
+                if success and res and res.status == 0 then
+                    table.insert(paths, path)
+                    metadata[name] = { timestamp_ms = math.floor(ev.start * 1000) }
+                else
+                    msg.warn(string.format("Thumbnails: ffmpeg failed for frame %d", i))
+                end
+                capture(i + 1)
+            end)
+        end
+
+        msg.warn(string.format("Thumbnails: starting capture of %d thumbnails", #events))
+        capture(1)
+    end)
+    if not ok then msg.error("Thumbnails: error - " .. tostring(err)) end
+end
+
 local function abort_transcription(err)
     msg.error("Aborting: " .. tostring(err))
     current_last_error = err
@@ -1253,8 +1374,6 @@ local function check_s3_etag(download_url, callback)
     end)
 end
 
-local subtitles_file = nil
-
 local function reload_subtitles_for_config()
     local work_dir = get_work_dir()
     if not work_dir then return end
@@ -1358,7 +1477,10 @@ local function start_backend_polling()
                                 msg.warn("Final subtitles downloaded")
                                 load_subtitle_file_into_mpv(subtitles_file)
                             end
+                            capture_and_upload_thumbnails()
                         end)
+                    else
+                        capture_and_upload_thumbnails()
                     end
                 end)
                 transcription_active = false
@@ -1560,6 +1682,7 @@ local function start_ai_transcription()
                 msg.warn("Subtitle request submitted: " .. current_subtitle_id)
 
                 state.subtitle_id = current_subtitle_id
+                state.is_own_creation = true
                 set_state(work_dir, state, current_request_key)
 
                 set_phase("processing")
@@ -1781,10 +1904,13 @@ local function init_state(base_dir)
     end
 
     if state.subtitle_status == "COMPLETED" then
-        local srt_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
-        if file_exists(srt_file) then
-            msg.warn("Loading completed subtitles: " .. srt_file)
-            load_subtitle_file_into_mpv(srt_file)
+        subtitles_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
+        if file_exists(subtitles_file) then
+            msg.warn("Loading completed subtitles: " .. subtitles_file)
+            load_subtitle_file_into_mpv(subtitles_file)
+            file_duration = mp.get_property_number("duration")
+            current_subtitle_id = state.subtitle_id
+            capture_and_upload_thumbnails()
         end
         return
     end
@@ -1929,6 +2055,8 @@ local function build_advanced_submenu()
     local pur_val = cfg.auto_purchase_past_daily_limit and "false" or "true"
     local ign_icon = cfg.ignore_community_subs and "check_box" or "check_box_outline_blank"
     local ign_val = cfg.ignore_community_subs and "false" or "true"
+    local tn_icon = cfg.contribute_thumbnails and "check_box" or "check_box_outline_blank"
+    local tn_val = cfg.contribute_thumbnails and "false" or "true"
     local adv_items = {
         { title = "Buy Existing Subs if Past Daily Limit", icon = pur_icon,
             value = cmd("set-config-auto-purchase", pur_val), keep_open = true },
@@ -2328,6 +2456,10 @@ mp.register_script_message("set-config-ignore-community", function(value)
     save_config_key("ignore_community_subs", value == "true")
     update_main_menu()
 end)
+mp.register_script_message("set-config-contribute-thumbnails", function(value)
+    save_config_key("contribute_thumbnails", value == "true")
+    update_main_menu()
+end)
 mp.register_script_message("set-config-subtitle-visibility", function(value)
     save_config_key("subtitle_visibility", value)
     update_main_menu()
@@ -2350,6 +2482,15 @@ mp.register_script_message("open-premium-page", function()
 end)
 mp.register_script_message("start-device-login", start_device_login)
 mp.register_script_message("logout", logout)
+mp.register_script_message("capture-thumbnails", function()
+    local work_dir = get_work_dir()
+    if work_dir then
+        local state = get_state(work_dir, current_request_key)
+        state.thumbnails_uploaded = false
+        set_state(work_dir, state, current_request_key)
+    end
+    capture_and_upload_thumbnails()
+end)
 mp.register_script_message("test-error", function() (nil)() end)
 
 mp.add_key_binding("b", "open-nexus-menu", show_main_menu)

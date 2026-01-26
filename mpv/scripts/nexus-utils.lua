@@ -13,6 +13,7 @@ local function init_cfg()
         auto_transcribe_new_files = false,
         auto_purchase_past_daily_limit = false,
         ignore_community_subs = false,
+        contribute_thumbnails = true,
         disable_subtitle_search = false,
         audio_format = "auto",  -- "auto", "mp3", or "wav"
         subtitle_visibility = "PUBLIC",  -- "PUBLIC" or "UNLISTED"

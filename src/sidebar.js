@@ -233,6 +233,12 @@ function saveIgnoreCommunity() {
     iina.postMessage('set-ignore-community', { enabled: checkbox.checked });
 }
 
+function saveContributeThumbnails() {
+    const checkbox = document.getElementById('contributeThumbnails');
+    logToIINA("[FE] Contribute thumbnails: " + checkbox.checked);
+    iina.postMessage('set-contribute-thumbnails', { enabled: checkbox.checked });
+}
+
 function saveSubtitleVisibility() {
     const select = document.getElementById('subtitleVisibility');
     logToIINA("[FE] Subtitle visibility: " + select.value);
@@ -480,6 +486,11 @@ window.addEventListener('DOMContentLoaded', () => {
         const ignoreCommunityCheckbox = document.getElementById('ignoreCommunity');
         if (ignoreCommunityCheckbox) {
             ignoreCommunityCheckbox.checked = config.ignore_community_subs === true;
+        }
+
+        const contributeThumbnailsCheckbox = document.getElementById('contributeThumbnails');
+        if (contributeThumbnailsCheckbox) {
+            contributeThumbnailsCheckbox.checked = config.contribute_thumbnails !== false;
         }
 
         const subtitleVisibilitySelect = document.getElementById('subtitleVisibility');
