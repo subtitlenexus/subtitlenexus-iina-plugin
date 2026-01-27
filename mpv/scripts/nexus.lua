@@ -1576,7 +1576,7 @@ local function start_ai_transcription()
     if not path or path == "" then return end
     if is_protocol(path) then
         msg.error("Cannot transcribe streams or invalid paths")
-        local err = "Cannot transcribe streams"
+        local err = "Live subtitles for URLs not supported"
         current_last_error = err
         sync_runtime_state()
         osd_msg(err, ERROR_MESSAGE_DISPLAY_TIME_S)
@@ -2503,7 +2503,8 @@ mp.add_key_binding("Ctrl+Shift+s", "stop-ai-transcription", stop_ai_transcriptio
 
 mp.register_event("log-message", function(e)
     pcall(function()
-        if e.prefix == "osd/libass" and (e.text or ""):find("Error opening font") then return end
+        if e.prefix == "osd/libass" and ((e.text or ""):find("Error opening font") or
+            (e.text or ""):find("fontselect: failed to find")) then return end
         local timestamp = os.date("%H:%M:%S")
         local text = (e.text or ""):gsub("\n$", "")
         local line = string.format("[%s][%s] %s: %s", timestamp, e.level or "?", e.prefix or "?", text)
@@ -2520,6 +2521,10 @@ end)
 mp.register_event("file-loaded", function()
     local path = mp.get_property("path") or "(none)"
     msg.warn("file-loaded event: " .. path)
+    if is_protocol(path) then
+        msg.warn("file is from a URL / stream, skipping initialization")
+        return
+    end
     if transcription_active then
         stop_ai_transcription()
     end
