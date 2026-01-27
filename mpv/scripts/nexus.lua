@@ -1436,7 +1436,7 @@ end
 local function start_backend_polling()
     if backend_poll_timer then backend_poll_timer:kill() end
     msg.warn("Starting backend polling (interval: " .. BACKEND_POLL_INTERVAL .. "s)")
-    backend_poll_timer = mp.add_periodic_timer(BACKEND_POLL_INTERVAL, function()
+    local function do_poll()
         if not transcription_active then
             stop_all_timers()
             return
@@ -1488,13 +1488,15 @@ local function start_backend_polling()
                 handle_poll_failure(data.error_type)
             end
         end)
-    end)
+    end
+    backend_poll_timer = mp.add_periodic_timer(BACKEND_POLL_INTERVAL, do_poll)
+    do_poll()
 end
 
-start_has_file_polling = function()
+start_has_file_polling = function(immediate)
     if has_file_poll_timer then has_file_poll_timer:kill() end
     msg.warn("Starting has_file polling (interval: " .. HAS_FILE_POLL_INTERVAL .. "s)")
-    has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, function()
+    local function do_poll()
         if not transcription_active then
             stop_all_timers()
             return
@@ -1558,7 +1560,9 @@ start_has_file_polling = function()
                 end)
             end
         end)
-    end)
+    end
+    has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, do_poll)
+    if immediate then do_poll() end
 end
 
 
@@ -1616,7 +1620,7 @@ local function start_ai_transcription()
             load_subtitle_file_into_mpv(subtitles_file)
         end
         osd_msg("Resuming subtitle request...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
-        start_has_file_polling()
+        start_has_file_polling(true)
         return
     end
 
@@ -2045,7 +2049,7 @@ local function build_logs_submenu()
         end
     end
     table.insert(items, { separator = true, selectable = false })
-    table.insert(items, { title = "Open Logs File", icon = "description", value = cmd("open-logs-file") })
+    table.insert(items, { title = "Open Log File", icon = "description", value = cmd("open-logs-file") })
     table.insert(items, { title = "Open Logs Dir", icon = "folder", value = cmd("open-logs-dir") })
     return { title = "Recent Logs", icon = "article", items = items }
 end
@@ -2499,6 +2503,7 @@ mp.add_key_binding("Ctrl+Shift+s", "stop-ai-transcription", stop_ai_transcriptio
 
 mp.register_event("log-message", function(e)
     pcall(function()
+        if e.prefix == "osd/libass" and (e.text or ""):find("Error opening font") then return end
         local timestamp = os.date("%H:%M:%S")
         local text = (e.text or ""):gsub("\n$", "")
         local line = string.format("[%s][%s] %s: %s", timestamp, e.level or "?", e.prefix or "?", text)
