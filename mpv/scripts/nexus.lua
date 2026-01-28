@@ -1240,7 +1240,7 @@ local function capture_and_upload_thumbnails()
                 return upload()
             end
             local ev = events[i]
-            local name = string.format("%.2f-%.2f.jpg", ev.start, ev.fin)
+            local name = string.format("%.2f-%.2f.jpg", ev.start / 60, ev.fin / 60)
             local path = utils.join_path(tn_dir, name)
             msg.warn(string.format("Thumbnails: capturing %d/%d at %.2fs", i, #events, ev.mid))
             mp.command_native_async({
