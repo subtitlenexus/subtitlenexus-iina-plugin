@@ -9,7 +9,7 @@ log.log("====================")
 log.log("====================")
 
 const IINA_PLUGINS_DIR = '~/Library/Application Support/com.colliderli.iina/plugins/';
-const PLUGIN_NAME = 'iina-nexus-plugin.iinaplugin';
+const PLUGIN_NAME = 'dev.dev.iina-nexus-plugin.iinaplugin';
 const PLUGIN_NAME_DEV = 'iina-nexus-plugin.iinaplugin-dev';
 const NEXUS_SCRIPTS = ["language.lua", "nexus-utils.lua", "srt-parser.lua", "nexus.lua"];
 

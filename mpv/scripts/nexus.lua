@@ -2494,6 +2494,16 @@ mp.register_script_message("capture-thumbnails", function()
     end
     capture_and_upload_thumbnails()
 end)
+mp.register_script_message("audio-path", function()
+    local path = mp.get_property("path")
+    if not path or path == "" then
+        osd_msg("No file loaded", ERROR_MESSAGE_DISPLAY_TIME_S)
+        return
+    end
+    local fmt = get_audio_format(get_work_dir())
+    local audio_file = get_cached_audio_path(path, fmt)
+    osd_msg(audio_file, LONG_MESSAGE_DISPLAY_TIME_S)
+end)
 mp.register_script_message("test-error", function() (nil)() end)
 
 mp.add_key_binding("b", "open-nexus-menu", show_main_menu)

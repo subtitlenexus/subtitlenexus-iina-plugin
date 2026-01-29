@@ -260,7 +260,7 @@ function openConfigFile() {
 }
 
 function openWebsite() {
-    iina.postMessage('open-url', { url: 'https:
+    iina.postMessage('open-url', { url: 'https://subtitlenexus.com/ai/subtitle-requests/' });
 }
 
 function openPremiumPage() {
