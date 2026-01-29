@@ -1063,6 +1063,7 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
         local elapsed = mp.get_time() - start_time
         if not success or not res then
             msg.error("S3 upload failed: curl error")
+            osd_msg("Error: Network error during upload", ERROR_MESSAGE_DISPLAY_TIME_S)
             report_error("s3_upload_network_error", "S3 upload failed (curl)", { stderr = res and res.stderr })
             callback(false)
             return
@@ -1074,6 +1075,7 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
             callback(true)
         else
             msg.error("S3 upload failed: HTTP " .. tostring(http_code))
+            osd_msg("Error: Upload failed (HTTP " .. tostring(http_code) .. ")", ERROR_MESSAGE_DISPLAY_TIME_S)
             report_error("s3_upload_http_error", "S3 upload failed", { http_code = http_code })
             callback(false)
         end
@@ -1644,7 +1646,6 @@ local function start_ai_transcription()
         local function do_upload()
             upload_start(audio_filename, file_size, file_duration, audio_lang, work_dir, function(start_data, start_err)
                 if start_err or not start_data then
-                    osd_msg("Upload failed to start", ERROR_MESSAGE_DISPLAY_TIME_S)
                     abort_transcription("upload_start failed: " .. tostring(start_err))
                     return
                 end
@@ -1654,14 +1655,12 @@ local function start_ai_transcription()
 
                 upload_to_s3(start_data.presigned_url, audio_file, work_dir, function(s3_success)
                     if not s3_success then
-                        osd_msg("Upload failed", ERROR_MESSAGE_DISPLAY_TIME_S)
                         abort_transcription("Upload to S3 failed")
                         return
                     end
 
                     upload_finish(upload_id, function(finish_data, finish_err)
                         if finish_err then
-                            osd_msg("Upload completion failed", ERROR_MESSAGE_DISPLAY_TIME_S)
                             abort_transcription("upload_finish failed: " .. tostring(finish_err))
                             return
                         end
