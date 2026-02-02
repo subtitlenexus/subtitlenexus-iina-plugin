@@ -445,6 +445,19 @@ window.addEventListener('DOMContentLoaded', () => {
             if (getPremiumBtn) getPremiumBtn.style.display = isFree ? "block" : "none";
             if (premiumBadge) premiumBadge.style.display = isFree ? "none" : "inline";
         }
+        const modelSelect = document.getElementById('modelSelect');
+        const isBeta = state && state.is_beta_user;
+        const betaModels = [{ value: "lulu-preview-2601", text: "lulu-preview-2601" }];
+        betaModels.forEach(m => {
+            const existing = modelSelect.querySelector(`option[value="${m.value}"]`);
+            if (isBeta && !existing) {
+                const opt = document.createElement('option');
+                opt.value = m.value; opt.textContent = m.text; opt.className = 'beta-option';
+                modelSelect.appendChild(opt);
+            } else if (!isBeta && existing) {
+                existing.remove();
+            }
+        });
     });
 
     iina.onMessage("config-loaded", (config) => {

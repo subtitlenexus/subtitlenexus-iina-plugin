@@ -63,6 +63,7 @@ local api_key_valid = nil
 local pending_device_code = nil
 local api_healthy = nil
 local internet_ok = nil
+local is_beta_user = false
 
 local s3_poll_timer = nil
 local backend_poll_timer = nil
@@ -548,6 +549,7 @@ sync_runtime_state = function()
     runtime_state.api_key_valid = api_key_valid
     runtime_state.api_healthy = api_healthy
     runtime_state.internet_ok = internet_ok
+    runtime_state.is_beta_user = is_beta_user
     runtime_state.pending_device_code = pending_device_code
     runtime_state.logs = log_buffer
     mp.set_property_native("user-data/nexus/state", runtime_state)
@@ -1159,6 +1161,8 @@ local function capture_and_upload_thumbnails()
         if not state.is_own_creation then msg.warn("Thumbnails: skipped (not own creation)") return end
         if state.thumbnails_uploaded then msg.warn("Thumbnails: skipped (already uploaded)") return end
         if not current_subtitle_id then msg.warn("Thumbnails: skipped (no subtitle_id)") return end
+        local subtitle_id = current_subtitle_id
+        local request_key = current_request_key
         if not subtitles_file or not file_exists(subtitles_file) then
             msg.warn("Thumbnails: skipped (no srt file)") return
         end
@@ -1179,7 +1183,7 @@ local function capture_and_upload_thumbnails()
             for _, ev in ipairs(sub.events) do
                 local mid = (ev.start_time + ev.end_time) / 2
                 if mid >= seg_start and mid < seg_end and #ev.text >= 20 and not ev.text:lower():find("nexus") then
-                    table.insert(events, { start = ev.start_time, fin = ev.end_time, mid = mid })
+                    table.insert(events, { start = ev.start_time, fin = ev.end_time, mid = mid, text = ev.text })
                     break
                 end
             end
@@ -1207,7 +1211,7 @@ local function capture_and_upload_thumbnails()
             table.insert(curl_args, "-H")
             table.insert(curl_args, "X-API-Key: " .. cfg.api_key)
             table.insert(curl_args, "-F")
-            table.insert(curl_args, "subtitle_id=" .. current_subtitle_id)
+            table.insert(curl_args, "subtitle_id=" .. subtitle_id)
             table.insert(curl_args, "-F")
             table.insert(curl_args, "image_data_json=" .. utils.format_json(image_data))
             for _, path in ipairs(paths) do
@@ -1228,7 +1232,7 @@ local function capture_and_upload_thumbnails()
                 if success and http_code and http_code:match("^2") then
                     msg.warn(string.format("Thumbnails: upload complete (HTTP %s)", http_code))
                     state.thumbnails_uploaded = true
-                    set_state(work_dir, state, current_request_key)
+                    set_state(work_dir, state, request_key)
                 else
                     msg.error(string.format("Thumbnails: upload failed (HTTP %s, err=%s)",
                         tostring(http_code), tostring(res and res.stderr)))
@@ -1252,7 +1256,7 @@ local function capture_and_upload_thumbnails()
             }, function(success, res)
                 if success and res and res.status == 0 then
                     table.insert(paths, path)
-                    metadata[name] = { timestamp_ms = math.floor(ev.start * 1000) }
+                    metadata[name] = { timestamp_ms = math.floor(ev.start * 1000), caption = ev.text }
                 else
                     msg.warn(string.format("Thumbnails: ffmpeg failed for frame %d", i))
                 end
@@ -1304,7 +1308,9 @@ local function fetch_user_info()
         if data then
             if data.plan then user_plan = data.plan:lower() end
             if data.username then user_name = data.username end
-            msg.warn("User: " .. tostring(user_name) .. ", plan: " .. tostring(user_plan))
+            if data.is_beta_user then is_beta_user = true end
+            msg.warn(string.format("User: %s, plan: %s, beta: %s",
+                tostring(user_name), tostring(user_plan), tostring(is_beta_user)))
             update_main_menu()
         end
     end, true)
@@ -1937,16 +1943,6 @@ end
 local function reset_state()
     local work_dir = get_work_dir()
     platform.current.cleanup_directory(work_dir)
-    local path = mp.get_property("path")
-    if path and path ~= "" then
-        local audio_file = get_cached_audio_path(path, get_audio_format(work_dir))
-        if file_exists(audio_file) then
-            os.remove(audio_file)
-            msg.warn("Deleted cached audio: " .. audio_file)
-        else
-            msg.warn("No cached audio to delete: " .. audio_file)
-        end
-    end
     stop_all_timers()
     transcription_active = false
     current_subtitle_id = nil
@@ -1995,7 +1991,7 @@ end
 local SUPPORTED_MODELS = {
     { code = "vega-preview", name = "vega-preview (standard)" },
     { code = "lulu-2504", name = "lulu (best)" },
-    { code = "lulu-preview-2601", name = "lulu-preview-2601" },
+    { code = "lulu-preview-2601", name = "lulu-preview-2601", beta = true },
 }
 
 local function get_language_display(lang)
@@ -2170,7 +2166,9 @@ local function build_main_menu_items()
         choices = sub_lang_choices }))
     local model_choices = {}
     for _, m in ipairs(SUPPORTED_MODELS) do
-        table.insert(model_choices, { value = m.code, label = m.name, short = m.name })
+        if not m.beta or is_beta_user then
+            table.insert(model_choices, { value = m.code, label = m.name, short = m.name })
+        end
     end
     table.insert(items, build_choice_submenu({ title = "Model", icon = "smart_toy",
         current = cfg.model, message = "select-model", choices = model_choices }))
@@ -2269,12 +2267,14 @@ local function show_model_select_menu()
     local current = cfg.model
     local items = {}
     for _, m in ipairs(SUPPORTED_MODELS) do
-        table.insert(items, {
-            title = m.name,
-            icon = m.code == current and "check" or nil,
-            active = m.code == current,
-            value = { "script-message-to", SELF, "select-model", m.code }
-        })
+        if not m.beta or is_beta_user then
+            table.insert(items, {
+                title = m.name,
+                icon = m.code == current and "check" or nil,
+                active = m.code == current,
+                value = { "script-message-to", SELF, "select-model", m.code }
+            })
+        end
     end
     menu_with_back("Model", "model-select", items)
 end
