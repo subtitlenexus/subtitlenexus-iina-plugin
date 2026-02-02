@@ -2133,7 +2133,7 @@ local function build_main_menu_items()
     else
         table.insert(items, { title = "Start Live Subtitles", icon = "subtitles",
             value = cmd("start-ai-transcription") })
-        table.insert(items, { title = "Streams as you watch · ~60s for first line",
+        table.insert(items, { title = "Streams as you watch · ~90s for first line",
             muted = true, selectable = false, italic = true })
     end
 
