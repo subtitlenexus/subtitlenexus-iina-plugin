@@ -201,6 +201,12 @@ event.on("iina.window-loaded", () => {
         syncToSidebar(100);
     });
 
+    sidebar.onMessage("fetch-usage", () => {
+        log.log("✓ Fetch usage");
+        mpv.command('script-message', ['fetch-usage']);
+        syncToSidebar(1000);
+    });
+
     sidebar.onMessage("retry-connection", () => {
         log.log("✓ Retry connection");
         mpv.command('script-message', ['retry-connection']);

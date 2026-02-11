@@ -72,6 +72,10 @@
             <span class="setting-label">Account</span>
             <span class="setting-value" id="mainAccountStatus">--</span>
         </button>
+        <button onclick="showCreditsView()" class="setting-btn">
+            <span class="setting-label">Credits</span>
+            <span class="setting-value">→</span>
+        </button>
 
         <hr class="section-divider">
 
@@ -152,7 +156,7 @@
             <option value="">Choose a model...</option>
             
             <option value="vega-preview">vega-preview (standard)</option>
-            <option value="lulu-2504">lulu (best)</option>
+            <option value="lulu-2504">lulu (our best)</option>
             
         </select>
     </div>
@@ -189,6 +193,26 @@
         <button class="danger-btn" onclick="doLogout()">Logout</button>
     </div>
     <div id="apiStatus"></div>
+    <button class="secondary" onclick="showMainView()">Back</button>
+</div>
+
+
+<div id="usageView" class="view">
+    <h2>Credits</h2>
+    <div id="usageContent">
+        <div class="setting-btn" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: flex; justify-content: space-between; align-items: center;">
+            <span class="setting-label">Subtitle Credits</span>
+            <span class="setting-value" id="usageSubtitleCredits">--</span>
+        </div>
+        <div class="setting-btn" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: flex; justify-content: space-between; align-items: center;">
+            <span class="setting-label">Tokens</span>
+            <span class="setting-value" id="usageTokens">--</span>
+        </div>
+        <div id="usageBetaRow" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: none; justify-content: space-between; align-items: center;">
+            <span class="setting-label">Beta Testing Credits</span>
+            <span class="setting-value" id="usageBetaCredits">--</span>
+        </div>
+    </div>
     <button class="secondary" onclick="showMainView()">Back</button>
 </div>
 

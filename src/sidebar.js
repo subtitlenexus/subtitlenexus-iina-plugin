@@ -1,5 +1,14 @@
 let currentApiKey = '';
 let currentLogs = [];
+let currentDomainWeb = '';
+
+function formatCost(cost, costType) {
+    if (cost == null || !costType) return null;
+    const unit = costType === 'TOKEN'
+        ? (cost === 1 ? 'token' : 'tokens')
+        : (cost === 1 ? 'credit' : 'credits');
+    return `${cost} ${unit}`;
+}
 
 function logToIINA(msg) {
     iina.postMessage('log', { message: msg });
@@ -16,6 +25,7 @@ function showMainView() {
     document.getElementById('languageView').classList.remove('active');
     document.getElementById('modelView').classList.remove('active');
     document.getElementById('apiView').classList.remove('active');
+    document.getElementById('usageView').classList.remove('active');
     document.getElementById('advancedView').classList.remove('active');
 
     document.getElementById('status').textContent = '';
@@ -29,6 +39,7 @@ function hideAllViews() {
     document.getElementById('languageView').classList.remove('active');
     document.getElementById('modelView').classList.remove('active');
     document.getElementById('apiView').classList.remove('active');
+    document.getElementById('usageView').classList.remove('active');
     document.getElementById('advancedView').classList.remove('active');
 }
 
@@ -49,6 +60,25 @@ function showApiView() {
     hideAllViews();
     document.getElementById('apiView').classList.add('active');
     document.getElementById('apiStatus').textContent = '';
+}
+
+function showUsageView() {
+    hideAllViews();
+    document.getElementById('usageView').classList.add('active');
+    iina.postMessage('fetch-usage', {});
+}
+
+function updateUsageUI(state) {
+    if (!state) return;
+    document.getElementById('usageTokens').textContent = state.user_tokens != null ? state.user_tokens : '--';
+    document.getElementById('usageSubtitleCredits').textContent = state.user_subtitle_credits != null ? state.user_subtitle_credits : '--';
+    const betaRow = document.getElementById('usageBetaRow');
+    if (state.user_beta_credits && state.user_beta_credits > 0) {
+        betaRow.style.display = 'flex';
+        document.getElementById('usageBetaCredits').textContent = state.user_beta_credits;
+    } else {
+        betaRow.style.display = 'none';
+    }
 }
 
 function showAdvancedView() {
@@ -263,6 +293,10 @@ function openWebsite() {
     iina.postMessage('open-url', { url: 'https://subtitlenexus.com/ai/subtitle-requests/' });
 }
 
+function openTopUp(path) {
+    iina.postMessage('open-url', { url: 'https://' + currentDomainWeb + path });
+}
+
 function openPremiumPage() {
     iina.postMessage('open-premium-page');
 }
@@ -356,6 +390,7 @@ window.addEventListener('DOMContentLoaded', () => {
         logToIINA("[FE] Received state-loaded: " + JSON.stringify(state));
 
         updateAccountUI(state);
+        updateUsageUI(state);
 
         if (transcriptionBtn) {
             setButtonLoading(false);
@@ -407,10 +442,31 @@ window.addEventListener('DOMContentLoaded', () => {
                 transcriptionBtn.style.border = "";
                 transcriptionBtn.dataset.action = "completed";
             } else {
-                transcriptionBtn.textContent = "Start Live Subtitles";
-                transcriptionBtn.disabled = false;
-                transcriptionBtn.style.border = "";
-                transcriptionBtn.dataset.action = "start";
+                if (state.can_purchase === false) {
+                    transcriptionBtn.textContent = "Start Live Subtitles";
+                    transcriptionBtn.disabled = true;
+                    transcriptionBtn.style.border = "";
+                    transcriptionBtn.style.opacity = "0.5";
+                    transcriptionBtn.dataset.action = "none";
+                } else {
+                    transcriptionBtn.textContent = "Start Live Subtitles";
+                    transcriptionBtn.disabled = false;
+                    transcriptionBtn.style.border = "";
+                    transcriptionBtn.style.opacity = "1";
+                    transcriptionBtn.dataset.action = "start";
+                }
+            }
+
+            const helperText = document.querySelector('.helper-text');
+            if (helperText && !isActive && !isProcessing && !isCompleted) {
+                if (state.can_purchase === false) {
+                    const path = state.user_plan === 'free' ? '/products/pricing/' : '/products/tokens/';
+                    helperText.innerHTML = 'Insufficient balance \u2014 <a href="#" onclick="openTopUp(\'' + path + '\'); return false;" style="color: #30d158;">Top up \u2197</a>';
+                } else {
+                    const costLabel = formatCost(state.current_cost, state.cost_type);
+                    const base = "Subtitles stream as you watch \u2014 first line appears in ~90s";
+                    helperText.textContent = costLabel ? costLabel + " \u00b7 " + base : base;
+                }
             }
         }
 
@@ -462,6 +518,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
     iina.onMessage("config-loaded", (config) => {
         logToIINA("[FE] Config loaded: " + JSON.stringify(config));
+
+        if (config.domain_web) currentDomainWeb = config.domain_web;
 
         if (config.subtitle_language_code) {
             const langSelect = document.getElementById('languageSelect');

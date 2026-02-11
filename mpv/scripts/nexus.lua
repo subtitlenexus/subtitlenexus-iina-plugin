@@ -64,6 +64,12 @@ local pending_device_code = nil
 local api_healthy = nil
 local internet_ok = nil
 local is_beta_user = false
+local user_tokens = nil
+local user_subtitle_credits = nil
+local user_beta_credits = nil
+local current_cost = nil
+local current_cost_type = nil     -- "TOKEN" or "SUBTITLE_REQUEST_CREDIT"
+local can_purchase = true
 
 local s3_poll_timer = nil
 local backend_poll_timer = nil
@@ -552,6 +558,12 @@ sync_runtime_state = function()
     runtime_state.is_beta_user = is_beta_user
     runtime_state.pending_device_code = pending_device_code
     runtime_state.logs = log_buffer
+    runtime_state.user_tokens = user_tokens
+    runtime_state.user_subtitle_credits = user_subtitle_credits
+    runtime_state.user_beta_credits = user_beta_credits
+    runtime_state.current_cost = current_cost
+    runtime_state.cost_type = current_cost_type
+    runtime_state.can_purchase = can_purchase
     mp.set_property_native("user-data/nexus/state", runtime_state)
 end
 
@@ -1303,15 +1315,44 @@ local function search_existing_subtitles(file_hash, callback)
     api_call("GET", endpoint, nil, callback)
 end
 
+local function format_cost(cost, cost_type)
+    if not cost or not cost_type or cost_type == "" then return nil end
+    local unit = cost_type == "TOKEN" and "tokens" or "credits"
+    if cost == 1 then unit = cost_type == "TOKEN" and "token" or "credit" end
+    return string.format("%g %s", cost, unit)
+end
+
+local function fetch_cost()
+    if not mp.get_property("path") then return end
+    local dur = file_duration or mp.get_property_number("duration")
+    local endpoint = string.format("/v1/ai/subtitle-request/cost/?version=%s&subtitle_language=%s",
+        cfg.model, cfg.subtitle_language_code)
+    if dur then endpoint = endpoint .. "&duration_seconds=" .. math.floor(dur) end
+    api_call("GET", endpoint, nil, function(data, err)
+        if data then
+            current_cost = data.cost
+            current_cost_type = data.cost_type
+            can_purchase = data.can_purchase ~= false
+            update_main_menu()
+        else
+            msg.warn("Failed to fetch cost: " .. tostring(err))
+        end
+    end, true)
+end
+
 local function fetch_user_info()
     api_call("GET", "/v1/user/info/", nil, function(data, err)
         if data then
             if data.plan then user_plan = data.plan:lower() end
             if data.username then user_name = data.username end
             if data.is_beta_user then is_beta_user = true end
+            if data.tokens then user_tokens = data.tokens end
+            if data.subtitle_request_credits then user_subtitle_credits = data.subtitle_request_credits end
+            if data.app_bonus_balance then user_beta_credits = data.app_bonus_balance end
             msg.warn(string.format("User: %s, plan: %s, beta: %s",
                 tostring(user_name), tostring(user_plan), tostring(is_beta_user)))
             update_main_menu()
+            fetch_cost()
         end
     end, true)
 end
@@ -1682,7 +1723,6 @@ local function start_ai_transcription()
         submit_and_poll = function(upload_id)
             submit_subtitle_request(upload_id, audio_lang, function(sr_data, sr_err)
                 if sr_err or not sr_data then
-                    osd_msg("Subtitle request failed", ERROR_MESSAGE_DISPLAY_TIME_S)
                     abort_transcription("submit_subtitle_request failed: " .. tostring(sr_err))
                     return
                 end
@@ -1990,7 +2030,7 @@ end
 
 local SUPPORTED_MODELS = {
     { code = "vega-preview", name = "vega-preview (standard)" },
-    { code = "lulu-2504", name = "lulu (best)" },
+    { code = "lulu-2504", name = "lulu (our best)" },
     { code = "lulu-preview-2601", name = "lulu-preview-2601", beta = true },
 }
 
@@ -2131,10 +2171,24 @@ local function build_main_menu_items()
         table.insert(items, { title = "View Subtitles", icon = "open_in_new",
             value = cmd("open-subtitle-url") })
     else
-        table.insert(items, { title = "Start Live Subtitles", icon = "subtitles",
-            value = cmd("start-ai-transcription") })
-        table.insert(items, { title = "Streams as you watch · ~90s for first line",
-            muted = true, selectable = false, italic = true })
+        if can_purchase == false then
+            local topup_path = user_plan == PLAN_FREE_NAME
+                and "/products/pricing/" or "/products/tokens/"
+            table.insert(items, { title = "Start Live Subtitles", icon = "subtitles",
+                muted = true, selectable = false })
+            table.insert(items, { title = "Insufficient balance — Top up ↗",
+                icon = "open_in_new", italic = true,
+                value = cmd("open-url",
+                    "https://" .. cfg.domain_web .. topup_path) })
+        else
+            table.insert(items, { title = "Start Live Subtitles", icon = "subtitles",
+                value = cmd("start-ai-transcription") })
+            local cost_label = format_cost(current_cost, current_cost_type)
+            local helper = "Streams as you watch · ~90s for first line"
+            if cost_label then helper = cost_label .. " · " .. helper end
+            table.insert(items, { title = helper,
+                muted = true, selectable = false, italic = true })
+        end
     end
 
     table.insert(items, { separator = true, selectable = false })
@@ -2175,6 +2229,8 @@ local function build_main_menu_items()
     local api_hint = cfg.api_key:sub(1, 8) .. "..."
     table.insert(items, { title = "API Key", icon = "key",
         hint = api_hint, value = cmd("show-api-menu") })
+    table.insert(items, { title = "Credits", icon = "bar_chart",
+        value = cmd("show-usage-menu") })
     table.insert(items, { title = "Logout", icon = "logout",
         hint = user_name, value = cmd("logout") })
 
@@ -2229,6 +2285,42 @@ local function menu_with_back(title, id, items)
     mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json({
         type = "menu", title = title, id = id, items = items
     }))
+end
+
+local function build_usage_items()
+    local items = {}
+    if user_subtitle_credits then
+        table.insert(items, { title = "Subtitle Credits", icon = "subtitles",
+            hint = tostring(user_subtitle_credits), selectable = false })
+    end
+    if user_tokens then
+        table.insert(items, { title = "Tokens", icon = "toll", hint = tostring(user_tokens), selectable = false })
+    end
+    if user_beta_credits and user_beta_credits > 0 then
+        table.insert(items, { title = "Beta Testing Credits", icon = "science",
+            hint = tostring(user_beta_credits), selectable = false })
+    end
+    if #items == 0 then
+        table.insert(items, { title = "No credit info available", muted = true, selectable = false })
+    end
+    return items
+end
+
+local function show_usage_menu()
+    menu_with_back("Credits", "usage-menu", build_usage_items())
+    api_call("GET", "/v1/user/info/", nil, function(data, err)
+        if data then
+            if data.tokens then user_tokens = data.tokens end
+            if data.subtitle_request_credits then user_subtitle_credits = data.subtitle_request_credits end
+            if data.app_bonus_balance then user_beta_credits = data.app_bonus_balance end
+            local items = build_usage_items()
+            table.insert(items, 1, { separator = true, selectable = false })
+            table.insert(items, 1, { title = "Back", icon = "arrow_back", value = cmd("open-menu") })
+            mp.commandv("script-message-to", "uosc", "update-menu", utils.format_json({
+                type = "menu", title = "Credits", id = "usage-menu", items = items
+            }))
+        end
+    end, true)
 end
 
 local function show_language_select_menu()
@@ -2387,6 +2479,7 @@ mp.register_script_message("select-subtitle-language", function(lang_code)
     osd_msg("Subtitle language set to: " .. get_language_display(language), DEFAULT_MESSAGE_DISPLAY_TIME_S)
     reload_subtitles_for_config()
     update_main_menu()
+    fetch_cost()
 end)
 
 mp.register_script_message("open-audio-language-menu", show_audio_language_menu)
@@ -2398,6 +2491,11 @@ mp.register_script_message("select-model", function(model_code)
     osd_msg("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
     reload_subtitles_for_config()
     update_main_menu()
+    fetch_cost()
+end)
+mp.register_script_message("show-usage-menu",    show_usage_menu)
+mp.register_script_message("fetch-usage", function()
+    fetch_user_info()
 end)
 mp.register_script_message("show-api-menu",        show_api_key_menu)
 mp.register_script_message("set-api-key",          set_api_key)
@@ -2441,11 +2539,13 @@ mp.register_script_message("set-config-subtitle-language", function(value)
     save_config_key("subtitle_language_code", value)
     reload_subtitles_for_config()
     update_main_menu()
+    fetch_cost()
 end)
 mp.register_script_message("set-config-model", function(value)
     save_config_key("model", value)
     reload_subtitles_for_config()
     update_main_menu()
+    fetch_cost()
 end)
 mp.register_script_message("set-config-auto-transcribe", function(value)
     save_config_key("auto_transcribe_new_files", value == "true")
@@ -2540,6 +2640,7 @@ mp.register_event("file-loaded", function()
     if not cfg.base_dir or cfg.base_dir == "" then
         mp.commandv("script-message", "init-state", "", "", "", "")
     end
+    if api_key_valid == true then fetch_cost() end
 end)
 
 mp.register_event("shutdown", function()
