@@ -62,11 +62,6 @@ function showApiView() {
     document.getElementById('apiStatus').textContent = '';
 }
 
-function showUsageView() {
-    hideAllViews();
-    document.getElementById('usageView').classList.add('active');
-    iina.postMessage('fetch-usage', {});
-}
 
 function updateUsageUI(state) {
     if (!state) return;
@@ -84,6 +79,20 @@ function updateUsageUI(state) {
 function showAdvancedView() {
     hideAllViews();
     document.getElementById('advancedView').classList.add('active');
+}
+
+function showUsageView() {
+    hideAllViews();
+    document.getElementById('usageView').classList.add('active');
+    iina.postMessage('fetch-usage', {});
+}
+
+function openDownloadHistory() {
+    iina.postMessage('open-url', { url: 'https://' + currentDomainWeb + '/analytics/subtitle-request-downloads/' });
+}
+
+function openSubmittedRequests() {
+    iina.postMessage('open-url', { url: 'https://' + currentDomainWeb + '/ai/subtitle-requests/' });
 }
 
 function updateCurrentApiKey(apiKey) {

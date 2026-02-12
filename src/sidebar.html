@@ -73,8 +73,8 @@
             <span class="setting-label">Account</span>
             <span class="setting-value" id="mainAccountStatus">--</span>
         </button>
-        <button onclick="showCreditsView()" class="setting-btn">
-            <span class="setting-label">Credits</span>
+        <button onclick="showUsageView()" class="setting-btn">
+            <span class="setting-label">Usage</span>
             <span class="setting-value">→</span>
         </button>
 
@@ -199,14 +199,14 @@
 
 
 <div id="usageView" class="view">
-    <h2>Credits</h2>
+    <h2>Usage</h2>
     <div id="usageContent">
         <div class="setting-btn" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: flex; justify-content: space-between; align-items: center;">
-            <span class="setting-label">Subtitle Credits</span>
+            <span class="setting-label">Credits Remaining</span>
             <span class="setting-value" id="usageSubtitleCredits">--</span>
         </div>
         <div class="setting-btn" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: flex; justify-content: space-between; align-items: center;">
-            <span class="setting-label">Tokens</span>
+            <span class="setting-label">Tokens Remaining</span>
             <span class="setting-value" id="usageTokens">--</span>
         </div>
         <div id="usageBetaRow" style="background: #333; padding: 16px; border-radius: 8px; margin: 5px 0; display: none; justify-content: space-between; align-items: center;">
@@ -214,6 +214,14 @@
             <span class="setting-value" id="usageBetaCredits">--</span>
         </div>
     </div>
+    <hr class="section-divider">
+    <button class="setting-btn" onclick="openDownloadHistory()">
+        <span class="setting-label">View Download History ↗</span>
+    </button>
+    <button class="setting-btn" onclick="openSubmittedRequests()">
+        <span class="setting-label">View Submitted Requests ↗</span>
+    </button>
+    <p style="color: #888; font-size: 12px; margin-top: 10px;">Downloads & requests show alongside your regular site activity</p>
     <button class="secondary" onclick="showMainView()">Back</button>
 </div>
 

@@ -2273,7 +2273,7 @@ local function build_main_menu_items()
     local api_hint = cfg.api_key:sub(1, 8) .. "..."
     table.insert(items, { title = "API Key", icon = "key",
         hint = api_hint, value = cmd("show-api-menu") })
-    table.insert(items, { title = "Credits", icon = "bar_chart",
+    table.insert(items, { title = "Usage", icon = "bar_chart",
         value = cmd("show-usage-menu") })
     table.insert(items, { title = "Logout", icon = "logout",
         hint = user_name, value = cmd("logout") })
@@ -2357,11 +2357,12 @@ end
 local function build_usage_items()
     local items = {}
     if user_subtitle_credits then
-        table.insert(items, { title = "Subtitle Credits", icon = "subtitles",
+        table.insert(items, { title = "Credits Remaining", icon = "subtitles",
             hint = tostring(user_subtitle_credits), selectable = false })
     end
     if user_tokens then
-        table.insert(items, { title = "Tokens", icon = "toll", hint = tostring(user_tokens), selectable = false })
+        table.insert(items, { title = "Tokens Remaining", icon = "toll",
+            hint = tostring(user_tokens), selectable = false })
     end
     if user_beta_credits and user_beta_credits > 0 then
         table.insert(items, { title = "Beta Testing Credits", icon = "science",
@@ -2370,11 +2371,19 @@ local function build_usage_items()
     if #items == 0 then
         table.insert(items, { title = "No credit info available", muted = true, selectable = false })
     end
+    table.insert(items, { separator = true, selectable = false })
+    table.insert(items, { title = "View Download History", icon = "download",
+        value = cmd("open-url", "https://" .. cfg.domain_web .. "/analytics/subtitle-request-downloads/") })
+    table.insert(items, { title = "View Submitted Requests", icon = "open_in_new",
+        value = cmd("open-url", "https://" .. cfg.domain_web .. "/ai/subtitle-requests/") })
+    table.insert(items, { separator = true, selectable = false })
+    table.insert(items, { title = "Downloads & requests show alongside your regular site activity",
+        muted = true, selectable = false, italic = true })
     return items
 end
 
 local function show_usage_menu()
-    menu_with_back("Credits", "usage-menu", build_usage_items())
+    menu_with_back("Usage", "usage-menu", build_usage_items())
     api_call("GET", "/v1/user/info/", nil, function(data, err)
         if data then
             if data.tokens then user_tokens = data.tokens end
@@ -2384,7 +2393,7 @@ local function show_usage_menu()
             table.insert(items, 1, { separator = true, selectable = false })
             table.insert(items, 1, { title = "Back", icon = "arrow_back", value = cmd("open-menu") })
             mp.commandv("script-message-to", "uosc", "update-menu", utils.format_json({
-                type = "menu", title = "Credits", id = "usage-menu", items = items
+                type = "menu", title = "Usage", id = "usage-menu", items = items
             }))
         end
     end, true)
