@@ -297,6 +297,10 @@ function openTopUp(path) {
     iina.postMessage('open-url', { url: 'https://' + currentDomainWeb + path });
 }
 
+function searchSubtitles() {
+    iina.postMessage('search-subtitles');
+}
+
 function openPremiumPage() {
     iina.postMessage('open-premium-page');
 }
@@ -418,6 +422,10 @@ window.addEventListener('DOMContentLoaded', () => {
             const showCancel = isActive && (phase === "extracting" || phase === "uploading");
             if (cancelBtn) cancelBtn.style.display = showCancel ? "block" : "none";
 
+            const isIdle = !isActive && !isProcessing && !isCompleted;
+            const searchBtn = document.getElementById("search-btn");
+            if (searchBtn) searchBtn.style.display = isIdle ? "block" : "none";
+
             if (isActive && phase === "extracting") {
                 const pct = extractionPct && extractionPct > 0 ? ` (${extractionPct}%)` : "";
                 transcriptionBtn.textContent = `Extracting Audio${pct}`;
@@ -458,7 +466,10 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             const helperText = document.querySelector('.helper-text');
-            if (helperText && !isActive && !isProcessing && !isCompleted) {
+            if (helperText && !isIdle) {
+                helperText.style.display = 'none';
+            } else if (helperText) {
+                helperText.style.display = 'block';
                 if (state.can_purchase === false) {
                     const path = state.user_plan === 'free' ? '/products/pricing/' : '/products/tokens/';
                     helperText.innerHTML = 'Insufficient balance \u2014 <a href="#" onclick="openTopUp(\'' + path + '\'); return false;" style="color: #30d158;">Top up \u2197</a>';

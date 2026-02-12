@@ -94,7 +94,10 @@ local BACKEND_POLL_INTERVAL = 60.0
 local INITIAL_POLL_DELAY = 30.0
 local PROGRESS_LOG_THRESHOLD = 3
 local HEALTH_ENDPOINT = "/v1/health/"
+local PROGRESS_CHAPTER_PREFIX = "Subtitle Progress"
 local get_audio_format
+local update_progress_chapter
+local clear_progress_chapter
 local function get_audio_content_type(work_dir)
     local types = { mp3 = "audio/mpeg", wav = "audio/wav" }
     return types[get_audio_format(work_dir)] or "audio/mpeg"
@@ -348,6 +351,14 @@ local function load_subtitle_file_into_mpv(sub_file)
     else
         msg.warn("Reloading subtitle track " .. id .. ": " .. sub_file)
         mp.commandv('sub-reload', id)
+    end
+    if transcription_active and current_progress > 0 then
+        local parsed = srt_parser.Subtitle:new(sub_file)
+        parsed:load()
+        if parsed.events and #parsed.events > 0 then
+            local last_end = parsed.events[#parsed.events].end_time
+            update_progress_chapter(current_progress, last_end)
+        end
     end
 end
 
@@ -1286,6 +1297,7 @@ local function abort_transcription(err)
     msg.error("Aborting: " .. tostring(err))
     current_last_error = err
     transcription_active = false
+    clear_progress_chapter()
     stop_all_timers()
     set_phase(nil)
     sync_runtime_state()
@@ -1443,6 +1455,7 @@ local function reload_subtitles_for_config()
         msg.warn("Pausing polling, switched to " .. current_request_key)
         stop_all_timers()
         transcription_active = false
+        clear_progress_chapter()
         current_subtitle_id = nil
         current_download_link = nil
         current_etag = nil
@@ -1533,6 +1546,7 @@ local function start_backend_polling()
                     end
                 end)
                 transcription_active = false
+                clear_progress_chapter()
             elseif data and data.status == "FAILED" then
                 handle_poll_failure(data.error_type)
             end
@@ -1612,6 +1626,81 @@ start_has_file_polling = function(immediate)
     end
     has_file_poll_timer = mp.add_periodic_timer(HAS_FILE_POLL_INTERVAL, do_poll)
     if immediate then do_poll() end
+end
+
+local function download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success)
+    get_download_link(cached_id, function(dl_data, dl_err)
+        if dl_err == "http_402" then
+            if cfg.auto_purchase_past_daily_limit then
+                msg.warn("Download limit reached, purchasing subtitle...")
+                osd_msg("Purchasing subtitle...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+                purchase_subtitle(cached_id, function(_, purchase_err)
+                    if purchase_err then
+                        osd_msg("Purchase failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                        if on_fail then on_fail() end
+                        return
+                    end
+                    msg.warn("Purchase successful, retrying download...")
+                    download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success)
+                end)
+            else
+                msg.warn("Download limit reached, auto-purchase disabled")
+                osd_msg("Daily download limit reached", ERROR_MESSAGE_DISPLAY_TIME_S)
+                if on_fail then on_fail() end
+            end
+            return
+        end
+
+        if not dl_data or not dl_data.download_link then
+            osd_msg("Download failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+            if on_fail then on_fail() end
+            return
+        end
+
+        local is_demo = dl_data.is_demo or false
+        local suffix = is_demo and "-demo" or ""
+        local srt_path = utils.join_path(work_dir,
+            cfg.model .. "-" .. cfg.subtitle_language_code .. suffix .. ".srt")
+
+        download_subtitles(dl_data.download_link, srt_path, function(success)
+            if not success then
+                msg.warn("Failed to download subtitles")
+                osd_msg("Download failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                if on_fail then on_fail() end
+                return
+            end
+
+            load_subtitle_file_into_mpv(srt_path)
+            state.subtitle_id = cached_id
+            state.subtitle_status = "COMPLETED"
+            state.is_demo = is_demo
+            set_state(work_dir, state, current_request_key)
+            update_main_menu()
+            if on_success then on_success(is_demo) end
+        end)
+    end)
+end
+
+local function search_subtitles()
+    local path = mp.get_property("path")
+    if not path then osd_msg("No file loaded", ERROR_MESSAGE_DISPLAY_TIME_S) return end
+    osd_msg("Searching for subtitles...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    local file_hash = get_or_compute_file_hash(path)
+    if not file_hash then osd_msg("Failed to compute file hash", ERROR_MESSAGE_DISPLAY_TIME_S) return end
+    search_existing_subtitles(file_hash, function(data, err)
+        if err or not data or not data.subtitle_ids or not data.subtitle_ids[1] then
+            osd_msg("No subtitles found", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            return
+        end
+        local work_dir = get_work_dir()
+        platform.current.create_directory(work_dir)
+        local state = get_state(work_dir) or {}
+        download_existing_subtitles(data.subtitle_ids[1], work_dir, state, nil,
+            function(is_demo)
+                local label = is_demo and "Demo subtitle loaded (10 min preview)" or "Subtitles loaded!"
+                osd_msg(label, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            end)
+    end)
 end
 
 
@@ -1829,64 +1918,16 @@ local function start_ai_transcription()
 
         local cached_id = search_data.subtitle_ids[1]
         msg.warn("Found cached subtitle: " .. cached_id)
-
-        local function download_existing_subtitles()
-            get_download_link(cached_id, function(dl_data, dl_err)
-                if dl_err == "http_402" then
-                    if cfg.auto_purchase_past_daily_limit then
-                        msg.warn("Download limit reached, purchasing subtitle...")
-                        osd_msg("Purchasing subtitle...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
-                        purchase_subtitle(cached_id, function(_, purchase_err)
-                            if purchase_err then
-                                proceed_with_transcription()
-                                return
-                            end
-                            msg.warn("Purchase successful, retrying download...")
-                            download_existing_subtitles()
-                        end)
-                    else
-                        msg.warn("Download limit reached, auto-purchase disabled")
-                        proceed_with_transcription()
-                    end
-                    return
-                end
-
-                if not dl_data or not dl_data.download_link then
-                    proceed_with_transcription()
-                    return
-                end
-
-                local is_demo = dl_data.is_demo or false
-                local suffix = is_demo and "-demo" or ""
-                local srt_path = utils.join_path(work_dir,
-                    cfg.model .. "-" .. cfg.subtitle_language_code .. suffix .. ".srt")
-
-                download_subtitles(dl_data.download_link, srt_path, function(success)
-                    if not success then
-                        msg.warn("Failed to download existing subtitles. Proceeding with transcription...")
-                        proceed_with_transcription()
-                        return
-                    end
-
-                    load_subtitle_file_into_mpv(srt_path)
-                    state.subtitle_id = cached_id
-                    state.subtitle_status = "COMPLETED"
-                    state.is_demo = is_demo
-                    set_state(work_dir, state, current_request_key)
-                    transcription_active = false
-                    set_phase(nil)
-                    update_main_menu()
-
-                    if is_demo then
-                        osd_msg("Demo subtitle loaded (10 min preview)", ERROR_MESSAGE_DISPLAY_TIME_S)
-                    else
-                        osd_msg("Loaded existing user subtitles", DEFAULT_MESSAGE_DISPLAY_TIME_S)
-                    end
-                end)
-            end)
-        end
-
-        download_existing_subtitles()
+        download_existing_subtitles(cached_id, work_dir, state, proceed_with_transcription, function(is_demo)
+            transcription_active = false
+            clear_progress_chapter()
+            set_phase(nil)
+            if is_demo then
+                osd_msg("Demo subtitle loaded (10 min preview)", ERROR_MESSAGE_DISPLAY_TIME_S)
+            else
+                osd_msg("Loaded existing user subtitles", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            end
+        end)
     end)
 end
 
@@ -1985,6 +2026,7 @@ local function reset_state()
     platform.current.cleanup_directory(work_dir)
     stop_all_timers()
     transcription_active = false
+    clear_progress_chapter()
     current_subtitle_id = nil
     current_request_key = nil
     current_download_link = nil
@@ -2171,6 +2213,8 @@ local function build_main_menu_items()
         table.insert(items, { title = "View Subtitles", icon = "open_in_new",
             value = cmd("open-subtitle-url") })
     else
+        table.insert(items, { title = "Search Subtitles", icon = "search",
+            value = cmd("search-subtitles") })
         if can_purchase == false then
             local topup_path = user_plan == PLAN_FREE_NAME
                 and "/products/pricing/" or "/products/tokens/"
@@ -2266,6 +2310,29 @@ local function show_main_menu()
         items = build_main_menu_items(),
     }
     mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(menu))
+end
+
+local function filter_progress_chapters(chapters)
+    local filtered = {}
+    for _, ch in ipairs(chapters) do
+        if not ch.title or not ch.title:find(PROGRESS_CHAPTER_PREFIX, 1, true) then
+            table.insert(filtered, ch)
+        end
+    end
+    return filtered
+end
+
+update_progress_chapter = function(pct, time_pos)
+    local dur = file_duration or mp.get_property_number("duration")
+    if not dur or pct <= 0 then return end
+    local t = time_pos or (dur * (pct / 100))
+    local chapters = filter_progress_chapters(mp.get_property_native("chapter-list") or {})
+    table.insert(chapters, { title = PROGRESS_CHAPTER_PREFIX .. " — " .. pct .. "%", time = t })
+    mp.set_property_native("chapter-list", chapters)
+end
+
+clear_progress_chapter = function()
+    mp.set_property_native("chapter-list", filter_progress_chapters(mp.get_property_native("chapter-list") or {}))
 end
 
 update_main_menu = function()
@@ -2503,6 +2570,7 @@ mp.register_script_message("show-api-key",         show_api_key)
 mp.register_script_message("open-menu",            show_main_menu)
 mp.register_script_message("start-ai-transcription-with-config", start_ai_transcription_with_config)
 mp.register_script_message("init-state", init_state)
+mp.register_script_message("search-subtitles", search_subtitles)
 mp.register_script_message("check-for-updates", function() check_for_update(false) end)
 mp.register_script_message("retry-connection", function()
     osd_msg("Retrying connection...", DEFAULT_MESSAGE_DISPLAY_TIME_S)

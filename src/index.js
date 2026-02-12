@@ -83,6 +83,12 @@ event.on("iina.window-loaded", () => {
         syncToSidebar(500);
     });
 
+    sidebar.onMessage("search-subtitles", () => {
+        log.log("Searching subtitles...");
+        mpv.command('script-message', ['search-subtitles']);
+        syncToSidebar(3000);
+    });
+
     sidebar.onMessage("set-audio-language", (data) => {
         log.log("✓ Set audio language: " + data.language);
         mpv.command('script-message', ['set-audio-language', data.language]);
