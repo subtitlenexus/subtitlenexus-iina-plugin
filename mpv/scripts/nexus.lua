@@ -81,6 +81,7 @@ local LOG_BUFFER_MAX = 500
 local update_main_menu
 local sync_runtime_state
 local start_has_file_polling
+local get_language_name
 
 local PLAN_FREE_NAME = "free"
 local DEFAULT_MESSAGE_DISPLAY_TIME_S = 2
@@ -434,6 +435,7 @@ local function sync_config()
     mp.set_property_native("user-data/nexus/config", {
         api_key = cfg.api_key,
         domain = cfg.domain,
+        domain_web = cfg.domain_web,
         subtitle_language_code = cfg.subtitle_language_code,
         model = cfg.model,
         auto_transcribe_new_files = cfg.auto_transcribe_new_files,
@@ -1689,7 +1691,9 @@ local function search_subtitles()
     if not file_hash then osd_msg("Failed to compute file hash", ERROR_MESSAGE_DISPLAY_TIME_S) return end
     search_existing_subtitles(file_hash, function(data, err)
         if err or not data or not data.subtitle_ids or not data.subtitle_ids[1] then
-            osd_msg("No subtitles found", DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            local lang = get_language_name(cfg.subtitle_language_code)
+            local no_sub_msg = "No " .. lang .. " " .. cfg.model .. " subtitles found"
+            osd_msg(no_sub_msg, DEFAULT_MESSAGE_DISPLAY_TIME_S)
             return
         end
         local work_dir = get_work_dir()
@@ -2083,7 +2087,7 @@ local function get_language_display(lang)
     return lang.name
 end
 
-local function get_language_name(code)
+get_language_name = function(code)
     for _, lang in pairs(SUPPORTED_SUBTITLE_LANGUAGES) do
         if type(lang) == "table" and lang.code == code then return get_language_display(lang) end
     end
