@@ -1048,11 +1048,22 @@ local function upload_to_s3(presigned_url, file_path, work_dir, callback)
 
     local curl_args
     local progress_file = nil
-    local progress_timer = nil
+    local progress_timer
 
     if is_windows then
         curl_args = make_curl_args({"-s", "-X", "PUT", "--data-binary", "@" .. file_path,
             "-H", "Content-Type: " .. get_audio_content_type(work_dir), "-w", "\n%{http_code}", presigned_url})
+        local est_seconds = math.max(5, file_size / (1 * 1024 * 1024))
+        progress_timer = mp.add_periodic_timer(0.5, function()
+            if not transcription_active then progress_timer:kill() return end
+            local pct = math.min(95, math.floor(100 * (1 - math.exp(-2 * (mp.get_time() - start_time) / est_seconds))))
+            if pct > current_upload_pct then
+                current_upload_pct = pct
+                osd_msg(string.format("Uploading: %d%%", current_upload_pct), 1)
+                sync_runtime_state()
+                update_main_menu()
+            end
+        end)
     else
         progress_file = platform.current.temp_dir .. "/nexus_upload_" .. os.time()
         local curl_cmd = string.format(
