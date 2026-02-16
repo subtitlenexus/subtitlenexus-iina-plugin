@@ -70,6 +70,11 @@ local user_beta_credits = nil
 local current_cost = nil
 local current_cost_type = nil     -- "TOKEN" or "SUBTITLE_REQUEST_CREDIT"
 local can_purchase = true
+local SUPPORTED_MODELS_FALLBACK = {
+    { slug = "vega-preview", short_description = "standard" },
+    { slug = "lulu-2504", short_description = "our best" },
+}
+local available_versions = SUPPORTED_MODELS_FALLBACK
 
 local s3_poll_timer = nil
 local backend_poll_timer = nil
@@ -391,10 +396,28 @@ local function get_request_key()
     return cfg.model .. ":" .. cfg.subtitle_language_code
 end
 
-local function get_state(work_dir, request_key)
+local function get_active_model_override(work_dir)
     local state_path = utils.join_path(work_dir, STATE_FILENAME)
     local all_state = nexus_utils.read_json(state_path) or {}
-    return (all_state.requests or {})[request_key or get_request_key()] or {}
+    return all_state.active_model_override
+end
+
+local function set_active_model_override(work_dir, model)
+    platform.current.create_directory(work_dir)
+    local state_path = utils.join_path(work_dir, STATE_FILENAME)
+    local all_state = nexus_utils.read_json(state_path) or {}
+    all_state.active_model_override = model
+    nexus_utils.write_json(state_path, all_state)
+end
+
+local function get_state(work_dir, request_key)
+    if not request_key then
+        local override = get_active_model_override(work_dir)
+        request_key = override and (override .. ":" .. cfg.subtitle_language_code) or get_request_key()
+    end
+    local state_path = utils.join_path(work_dir, STATE_FILENAME)
+    local all_state = nexus_utils.read_json(state_path) or {}
+    return (all_state.requests or {})[request_key] or {}
 end
 
 local function get_audio_language(work_dir)
@@ -577,6 +600,8 @@ sync_runtime_state = function()
     runtime_state.current_cost = current_cost
     runtime_state.cost_type = current_cost_type
     runtime_state.can_purchase = can_purchase
+    runtime_state.available_versions = available_versions
+    runtime_state.active_model_override = get_active_model_override(work_dir)
     mp.set_property_native("user-data/nexus/state", runtime_state)
 end
 
@@ -1333,10 +1358,37 @@ local function get_download_link(subtitle_id, callback)
     api_call("GET", endpoint, nil, callback)
 end
 
-local function search_existing_subtitles(file_hash, callback)
+local function extract_version_from_subtitle_id(subtitle_id)
+    local parts = {}
+    for part in subtitle_id:gmatch("[^:]+") do table.insert(parts, part) end
+    if #parts < 2 then
+        report_error("bad_subtitle_id_format", "Unexpected format: " .. subtitle_id)
+        return nil
+    end
+    local version = parts[#parts - 1]
+    if version and available_versions then
+        for _, v in ipairs(available_versions) do
+            if v.slug == version then return version end
+        end
+        msg.warn("Version from subtitle_id not in available_versions: " .. version)
+        return nil
+    end
+    return version
+end
+
+
+local function search_existing_subtitles(file_hash, callback, all_versions)
     local scope = cfg.ignore_community_subs and "own" or "all"
-    local endpoint = string.format("/v1/subtitle/search/?file_hash=%s&version=%s&language=%s&scope=%s",
-        file_hash, cfg.model, cfg.subtitle_language_code, scope)
+    local version_params = ""
+    if all_versions and available_versions then
+        for _, v in ipairs(available_versions) do
+            version_params = version_params .. "&version=" .. v.slug
+        end
+    else
+        version_params = "&version=" .. cfg.model
+    end
+    local endpoint = string.format("/v1/subtitle/search/?file_hash=%s%s&language=%s&scope=%s",
+        file_hash, version_params, cfg.subtitle_language_code, scope)
     api_call("GET", endpoint, nil, callback)
 end
 
@@ -1365,6 +1417,21 @@ local function fetch_cost()
     end, true)
 end
 
+local function fetch_available_versions()
+    api_call("GET", "/v1/ai/versions/", nil, function(data, err)
+        if data and #data > 0 then
+            available_versions = data
+            local slugs = {}
+            for _, v in ipairs(data) do table.insert(slugs, v.slug) end
+            msg.warn("Available versions: " .. table.concat(slugs, ", "))
+            update_main_menu()
+            sync_runtime_state()
+        else
+            msg.warn("Failed to fetch versions, using fallback")
+        end
+    end, true)
+end
+
 local function fetch_user_info()
     api_call("GET", "/v1/user/info/", nil, function(data, err)
         if data then
@@ -1378,6 +1445,7 @@ local function fetch_user_info()
                 tostring(user_name), tostring(user_plan), tostring(is_beta_user)))
             update_main_menu()
             fetch_cost()
+            fetch_available_versions()
         end
     end, true)
 end
@@ -1480,6 +1548,7 @@ local function reload_subtitles_for_config()
         load_subtitle_file_into_mpv(subtitles_file)
     else
         msg.warn("No subtitle file for " .. cfg.model .. "/" .. cfg.subtitle_language_code)
+        mp.commandv("sub-remove")
     end
 end
 
@@ -1641,7 +1710,8 @@ start_has_file_polling = function(immediate)
     if immediate then do_poll() end
 end
 
-local function download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success)
+local function download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success, active_model_override)
+    local model = active_model_override or cfg.model
     get_download_link(cached_id, function(dl_data, dl_err)
         if dl_err == "http_402" then
             if cfg.auto_purchase_past_daily_limit then
@@ -1654,7 +1724,7 @@ local function download_existing_subtitles(cached_id, work_dir, state, on_fail, 
                         return
                     end
                     msg.warn("Purchase successful, retrying download...")
-                    download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success)
+                    download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success, active_model_override)
                 end)
             else
                 msg.warn("Download limit reached, auto-purchase disabled")
@@ -1673,7 +1743,7 @@ local function download_existing_subtitles(cached_id, work_dir, state, on_fail, 
         local is_demo = dl_data.is_demo or false
         local suffix = is_demo and "-demo" or ""
         local srt_path = utils.join_path(work_dir,
-            cfg.model .. "-" .. cfg.subtitle_language_code .. suffix .. ".srt")
+            model .. "-" .. cfg.subtitle_language_code .. suffix .. ".srt")
 
         download_subtitles(dl_data.download_link, srt_path, function(success)
             if not success then
@@ -1687,7 +1757,8 @@ local function download_existing_subtitles(cached_id, work_dir, state, on_fail, 
             state.subtitle_id = cached_id
             state.subtitle_status = "COMPLETED"
             state.is_demo = is_demo
-            set_state(work_dir, state, current_request_key)
+            local request_key = model .. ":" .. cfg.subtitle_language_code
+            set_state(work_dir, state, request_key)
             update_main_menu()
             if on_success then on_success(is_demo) end
         end)
@@ -1703,19 +1774,22 @@ local function search_subtitles()
     search_existing_subtitles(file_hash, function(data, err)
         if err or not data or not data.subtitle_ids or not data.subtitle_ids[1] then
             local lang = get_language_name(cfg.subtitle_language_code)
-            local no_sub_msg = "No " .. lang .. " " .. cfg.model .. " subtitles found"
-            osd_msg(no_sub_msg, DEFAULT_MESSAGE_DISPLAY_TIME_S)
+            osd_msg("No " .. lang .. " subtitles found", DEFAULT_MESSAGE_DISPLAY_TIME_S)
             return
         end
+        local matched_version = extract_version_from_subtitle_id(data.subtitle_ids[1])
+        local is_different = matched_version and matched_version ~= cfg.model
         local work_dir = get_work_dir()
         platform.current.create_directory(work_dir)
-        local state = get_state(work_dir) or {}
+        local state = get_state(work_dir, (matched_version or cfg.model) .. ":" .. cfg.subtitle_language_code) or {}
         download_existing_subtitles(data.subtitle_ids[1], work_dir, state, nil,
             function(is_demo)
-                local label = is_demo and "Demo subtitle loaded (10 min preview)" or "Subtitles loaded!"
+                set_active_model_override(work_dir, is_different and matched_version or nil)
+                local base = is_demo and "10 min demo subtitle loaded!" or "Subtitles loaded!"
+                local label = is_different and (base .. " (" .. matched_version .. ")") or base
                 osd_msg(label, DEFAULT_MESSAGE_DISPLAY_TIME_S)
-            end)
-    end)
+            end, matched_version)
+    end, true)
 end
 
 
@@ -1996,8 +2070,9 @@ local function init_state(base_dir)
 
     local work_dir = get_work_dir()
     msg.warn("Full work dir: " .. tostring(work_dir))
-    current_request_key = get_request_key()
-    local state = get_state(work_dir, current_request_key)
+    local override_model = get_active_model_override(work_dir)
+    local state = get_state(work_dir)
+    current_request_key = (override_model or cfg.model) .. ":" .. cfg.subtitle_language_code
     msg.warn("State from file: " .. utils.format_json(state))
     sync_runtime_state()
     msg.warn("Property user-data/nexus/state set")
@@ -2009,7 +2084,8 @@ local function init_state(base_dir)
     end
 
     if state.subtitle_status == "COMPLETED" then
-        subtitles_file = utils.join_path(work_dir, cfg.model .. "-" .. cfg.subtitle_language_code .. ".srt")
+        local load_model = override_model or cfg.model
+        subtitles_file = utils.join_path(work_dir, load_model .. "-" .. cfg.subtitle_language_code .. ".srt")
         if file_exists(subtitles_file) then
             msg.warn("Loading completed subtitles: " .. subtitles_file)
             load_subtitle_file_into_mpv(subtitles_file)
@@ -2084,12 +2160,6 @@ end
 local function open_logs_file()
     if log_file_path then platform.current.open(log_file_path) end
 end
-
-local SUPPORTED_MODELS = {
-    { code = "vega-preview", name = "vega-preview (standard)" },
-    { code = "lulu-2504", name = "lulu (our best)" },
-    { code = "lulu-preview-2601", name = "lulu-preview-2601", beta = true },
-}
 
 local function get_language_display(lang)
     if lang.english_name and lang.name ~= lang.english_name then
@@ -2278,13 +2348,15 @@ local function build_main_menu_items()
         current = cfg.subtitle_language_code, message = "select-subtitle-language",
         choices = sub_lang_choices }))
     local model_choices = {}
-    for _, m in ipairs(SUPPORTED_MODELS) do
-        if not m.beta or is_beta_user then
-            table.insert(model_choices, { value = m.code, label = m.name, short = m.name })
-        end
+    for _, v in ipairs(available_versions) do
+        local label = v.short_description and (v.slug .. " (" .. v.short_description .. ")") or v.slug
+        table.insert(model_choices, { value = v.slug, label = label, short = label })
     end
+    local work_dir = get_work_dir()
+    local model_override = work_dir and get_active_model_override(work_dir)
+    local display_model = model_override or cfg.model
     table.insert(items, build_choice_submenu({ title = "Model", icon = "smart_toy",
-        current = cfg.model, message = "select-model", choices = model_choices }))
+        current = display_model, message = "select-model", choices = model_choices }))
     local api_hint = cfg.api_key:sub(1, 8) .. "..."
     table.insert(items, { title = "API Key", icon = "key",
         hint = api_hint, value = cmd("show-api-menu") })
@@ -2447,17 +2519,18 @@ local function show_audio_language_menu()
 end
 
 local function show_model_select_menu()
-    local current = cfg.model
+    local work_dir = get_work_dir()
+    local override = work_dir and get_active_model_override(work_dir)
+    local current = override or cfg.model
     local items = {}
-    for _, m in ipairs(SUPPORTED_MODELS) do
-        if not m.beta or is_beta_user then
-            table.insert(items, {
-                title = m.name,
-                icon = m.code == current and "check" or nil,
-                active = m.code == current,
-                value = { "script-message-to", SELF, "select-model", m.code }
-            })
-        end
+    for _, v in ipairs(available_versions) do
+        local label = v.short_description and (v.slug .. " (" .. v.short_description .. ")") or v.slug
+        table.insert(items, {
+            title = label,
+            icon = v.slug == current and "check" or nil,
+            active = v.slug == current,
+            value = { "script-message-to", SELF, "select-model", v.slug }
+        })
     end
     menu_with_back("Model", "model-select", items)
 end
@@ -2567,6 +2640,7 @@ mp.register_script_message("select-subtitle-language", function(lang_code)
     end
     cfg.subtitle_language_code = language.code
     save_config_key("subtitle_language_code", language.code)
+    set_active_model_override(get_work_dir(), nil)
     osd_msg("Subtitle language set to: " .. get_language_display(language), DEFAULT_MESSAGE_DISPLAY_TIME_S)
     reload_subtitles_for_config()
     update_main_menu()
@@ -2579,6 +2653,7 @@ mp.register_script_message("open-model-menu",      show_model_select_menu)
 mp.register_script_message("select-model", function(model_code)
     cfg.model = model_code
     save_config_key("model", model_code)
+    set_active_model_override(get_work_dir(), nil)
     osd_msg("Model set to: " .. model_code, DEFAULT_MESSAGE_DISPLAY_TIME_S)
     reload_subtitles_for_config()
     update_main_menu()
@@ -2629,12 +2704,14 @@ mp.register_script_message("set-audio-language", function(value)
 end)
 mp.register_script_message("set-config-subtitle-language", function(value)
     save_config_key("subtitle_language_code", value)
+    set_active_model_override(get_work_dir(), nil)
     reload_subtitles_for_config()
     update_main_menu()
     fetch_cost()
 end)
 mp.register_script_message("set-config-model", function(value)
     save_config_key("model", value)
+    set_active_model_override(get_work_dir(), nil)
     reload_subtitles_for_config()
     update_main_menu()
     fetch_cost()

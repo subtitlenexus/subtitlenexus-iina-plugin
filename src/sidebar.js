@@ -1,6 +1,7 @@
 let currentApiKey = '';
 let currentLogs = [];
 let currentDomainWeb = '';
+let activeModelOverride = null;
 
 function formatCost(cost, costType) {
     if (cost == null || !costType) return null;
@@ -521,19 +522,23 @@ window.addEventListener('DOMContentLoaded', () => {
             if (getPremiumBtn) getPremiumBtn.style.display = isFree ? "block" : "none";
             if (premiumBadge) premiumBadge.style.display = isFree ? "none" : "inline";
         }
-        const modelSelect = document.getElementById('modelSelect');
-        const isBeta = state && state.is_beta_user;
-        const betaModels = [{ value: "lulu-preview-2601", text: "lulu-preview-2601" }];
-        betaModels.forEach(m => {
-            const existing = modelSelect.querySelector(`option[value="${m.value}"]`);
-            if (isBeta && !existing) {
+        if (state && state.available_versions && state.available_versions.length > 0) {
+            const modelSelect = document.getElementById('modelSelect');
+            const currentVal = modelSelect.value;
+            while (modelSelect.options.length > 1) modelSelect.remove(1);
+            state.available_versions.forEach(v => {
                 const opt = document.createElement('option');
-                opt.value = m.value; opt.textContent = m.text; opt.className = 'beta-option';
+                opt.value = v.slug;
+                opt.textContent = v.short_description ? `${v.slug} (${v.short_description})` : v.slug;
                 modelSelect.appendChild(opt);
-            } else if (!isBeta && existing) {
-                existing.remove();
-            }
-        });
+            });
+            if (currentVal) modelSelect.value = currentVal;
+        }
+        activeModelOverride = (state && state.active_model_override) || null;
+        if (activeModelOverride) {
+            document.getElementById('mainModel').textContent = activeModelOverride;
+            document.getElementById('modelSelect').value = activeModelOverride;
+        }
     });
 
     iina.onMessage("config-loaded", (config) => {
@@ -552,8 +557,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (config.model) {
             document.getElementById('currentModel').textContent = config.model;
-            document.getElementById('modelSelect').value = config.model;
-            document.getElementById('mainModel').textContent = config.model;
+            const displayModel = activeModelOverride || config.model;
+            document.getElementById('modelSelect').value = displayModel;
+            document.getElementById('mainModel').textContent = displayModel;
         }
 
         if (config.api_key) {
