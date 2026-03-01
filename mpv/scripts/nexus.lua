@@ -1350,7 +1350,7 @@ local function handle_poll_failure(error_type)
 end
 
 local function poll_subtitle_status(callback)
-    api_call("GET", "/v1/ai/subtitle-request/", { subtitle_id = current_subtitle_id }, callback)
+    api_call("GET", "/v1/ai/subtitle-request/?subtitle_id=" .. current_subtitle_id, nil, callback)
 end
 
 local function get_download_link(subtitle_id, callback)
