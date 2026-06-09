@@ -253,6 +253,13 @@ local function get_ffmpeg_path()
             "/opt/homebrew/bin/ffmpeg",
             "/usr/bin/ffmpeg"
         }
+        local home = os.getenv("HOME")
+        if home then
+            table.insert(ffmpeg_candidates, home .. "/.local/bin/ffmpeg")
+            table.insert(ffmpeg_candidates, home .. "/bin/ffmpeg")
+        else
+            msg.warn("HOME env not set; skipping per-user ffmpeg candidates")
+        end
     end
 
     msg.warn("Checking known FFmpeg paths...")
