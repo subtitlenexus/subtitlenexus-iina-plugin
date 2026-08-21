@@ -547,6 +547,9 @@ local function load_config_from_file()
 end
 
 load_config_from_file()
+if not nexus_utils.is_iina() then
+    mp.set_property_number("volume", cfg.volume)
+end
 
 local function save_config_to_file()
     local config_path = get_config_path()
