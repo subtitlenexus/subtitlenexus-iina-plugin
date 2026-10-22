@@ -506,6 +506,18 @@ window.addEventListener('DOMContentLoaded', () => {
             if (preview) preview.textContent = state.logs.slice(-10).join('\n') || '(no logs)';
         }
 
+        const versions = (state && state.available_versions) || [];
+        const audioCodes = [...new Set(versions.flatMap(v => v.audio_languages || []))];
+        const audioLangSelect = document.getElementById('audioLanguageSelect');
+        if (audioCodes.length > 0 && audioLangSelect.dataset.codes !== audioCodes.join()) {
+            audioLangSelect.dataset.codes = audioCodes.join();
+            while (audioLangSelect.options.length > 1) audioLangSelect.remove(1);
+            audioCodes.forEach(code => {
+                const label = document.querySelector(`#languageSelect option[value="${code}"]`);
+                audioLangSelect.appendChild(new Option(label ? label.text : code, code));
+            });
+        }
+
         if (state && state.audio_language) {
             const audioLangSelect = document.getElementById('audioLanguageSelect');
             audioLangSelect.value = state.audio_language;
@@ -522,11 +534,13 @@ window.addEventListener('DOMContentLoaded', () => {
             if (getPremiumBtn) getPremiumBtn.style.display = isFree ? "block" : "none";
             if (premiumBadge) premiumBadge.style.display = isFree ? "none" : "inline";
         }
-        if (state && state.available_versions && state.available_versions.length > 0) {
-            const modelSelect = document.getElementById('modelSelect');
+        const models = versions.filter(v => !v.audio_languages || !state.audio_language || v.audio_languages.includes(state.audio_language));
+        const modelSelect = document.getElementById('modelSelect');
+        if (models.length > 0 && modelSelect.dataset.slugs !== models.map(v => v.slug).join()) {
+            modelSelect.dataset.slugs = models.map(v => v.slug).join();
             const currentVal = modelSelect.value;
             while (modelSelect.options.length > 1) modelSelect.remove(1);
-            state.available_versions.forEach(v => {
+            models.forEach(v => {
                 const opt = document.createElement('option');
                 opt.value = v.slug;
                 opt.textContent = v.short_description ? `${v.slug} (${v.short_description})` : v.slug;

@@ -123,6 +123,34 @@ local SUPPORTED_AUDIO_LANGUAGES = {
     Language.JAPANESE,
 }
 
+local audio_support = {}
+
+function audio_support.versions_for(code)
+    local versions = {}
+    for _, v in ipairs(available_versions) do
+        local ok = not code or not v.audio_languages
+        for _, c in ipairs(v.audio_languages or {}) do
+            if c == code then ok = true end
+        end
+        if ok then table.insert(versions, v) end
+    end
+    return versions
+end
+
+function audio_support.languages()
+    local langs, seen = {}, {}
+    for _, v in ipairs(available_versions) do
+        for _, code in ipairs(v.audio_languages or {}) do
+            local lang = Language.fromCode(code)
+            if lang and not seen[code] then
+                seen[code] = true
+                table.insert(langs, lang)
+            end
+        end
+    end
+    return #langs > 0 and langs or SUPPORTED_AUDIO_LANGUAGES
+end
+
 local SUPPORTED_SUBTITLE_LANGUAGES = {
     Language.CHINESE,
     Language.CHINESE_TW,
@@ -134,6 +162,7 @@ local SUPPORTED_SUBTITLE_LANGUAGES = {
     Language.GERMAN,
     Language.INDONESIAN,
     Language.ITALIAN,
+    Language.JAPANESE,
     Language.KOREAN,
     Language.MALAY,
     Language.POLISH,
@@ -777,7 +806,8 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
             msg.error("API error: HTTP " .. tostring(http_code) .. " - " .. body_str)
             local error_msg = utils.parse_json(body_str)
             local detail = error_msg and (error_msg.message or error_msg.detail)
-            if http_code == 401 then
+            local bad_key = http_code == 401 and (not detail or detail == "Unauthorized")
+            if bad_key then
                 detail = "Bad API Key. Try logging in again."
             elseif type(detail) == "table" then
                 detail = detail[1] and detail[1].msg or "Validation error"
@@ -789,7 +819,7 @@ local function api_call(method, endpoint, body, callback, silent, skip_auth)
                 sync_runtime_state()
                 osd_msg("Error: " .. detail, ERROR_MESSAGE_DISPLAY_TIME_S)
             end
-            callback(nil, "http_" .. tostring(http_code))
+            callback(nil, "http_" .. tostring(http_code), bad_key)
         end
     end)
 end
@@ -1720,10 +1750,18 @@ start_has_file_polling = function(immediate)
     if immediate then do_poll() end
 end
 
-local function download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success, active_model_override)
+local function download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success, active_model_override,
+                                           purchased)
     local model = active_model_override or cfg.model
-    get_download_link(cached_id, function(dl_data, dl_err)
-        if dl_err == "http_402" then
+    get_download_link(cached_id, function(dl_data, dl_err, bad_key)
+        if not bad_key and (dl_err == "http_402" or dl_err == "http_401" or dl_err == "http_403"
+            or dl_err == "http_429") then
+            if purchased then
+                msg.warn("Download still blocked after purchase")
+                osd_msg("Download failed", ERROR_MESSAGE_DISPLAY_TIME_S)
+                if on_fail then on_fail() end
+                return
+            end
             if cfg.auto_purchase_past_daily_limit then
                 msg.warn("Download limit reached, purchasing subtitle...")
                 osd_msg("Purchasing subtitle...", DEFAULT_MESSAGE_DISPLAY_TIME_S)
@@ -1734,11 +1772,14 @@ local function download_existing_subtitles(cached_id, work_dir, state, on_fail, 
                         return
                     end
                     msg.warn("Purchase successful, retrying download...")
-                    download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success, active_model_override)
+                    download_existing_subtitles(cached_id, work_dir, state, on_fail, on_success,
+                        active_model_override, true)
                 end)
             else
                 msg.warn("Download limit reached, auto-purchase disabled")
-                osd_msg("Daily download limit reached", ERROR_MESSAGE_DISPLAY_TIME_S)
+                if dl_err == "http_429" or dl_err == "http_402" then
+                    osd_msg("Daily download limit reached", ERROR_MESSAGE_DISPLAY_TIME_S)
+                end
                 if on_fail then on_fail() end
             end
             return
@@ -2338,7 +2379,7 @@ local function build_main_menu_items()
     end
 
     local audio_lang_choices = {}
-    for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
+    for _, lang in pairs(audio_support.languages()) do
         if type(lang) == "table" then
             local display = get_language_display(lang)
             table.insert(audio_lang_choices, { value = lang.code, label = display, short = display })
@@ -2358,7 +2399,7 @@ local function build_main_menu_items()
         current = cfg.subtitle_language_code, message = "select-subtitle-language",
         choices = sub_lang_choices }))
     local model_choices = {}
-    for _, v in ipairs(available_versions) do
+    for _, v in ipairs(audio_support.versions_for(get_audio_language(get_work_dir()))) do
         local label = v.short_description and (v.slug .. " (" .. v.short_description .. ")") or v.slug
         table.insert(model_choices, { value = v.slug, label = label, short = label })
     end
@@ -2515,7 +2556,7 @@ end
 local function show_audio_language_menu()
     local current = get_audio_language(get_work_dir())
     local items = {}
-    for _, lang in pairs(SUPPORTED_AUDIO_LANGUAGES) do
+    for _, lang in pairs(audio_support.languages()) do
         if type(lang) == "table" and lang.code and lang.name then
             table.insert(items, {
                 title = get_language_display(lang),
@@ -2533,7 +2574,7 @@ local function show_model_select_menu()
     local override = work_dir and get_active_model_override(work_dir)
     local current = override or cfg.model
     local items = {}
-    for _, v in ipairs(available_versions) do
+    for _, v in ipairs(audio_support.versions_for(work_dir and get_audio_language(work_dir))) do
         local label = v.short_description and (v.slug .. " (" .. v.short_description .. ")") or v.slug
         table.insert(items, {
             title = label,
@@ -2636,9 +2677,20 @@ local function logout()
 end
 
 
+function audio_support.ensure_model(lang_code)
+    local versions = audio_support.versions_for(lang_code)
+    for _, v in ipairs(versions) do
+        if v.slug == cfg.model then return end
+    end
+    if versions[1] then
+        mp.commandv("script-message-to", SELF, "select-model", versions[1].slug)
+    end
+end
+
 mp.register_script_message("select-audio-language", function(lang_code)
     set_audio_language(get_work_dir(), lang_code)
     osd_msg("Audio language set to: " .. get_language_name(lang_code), DEFAULT_MESSAGE_DISPLAY_TIME_S)
+    audio_support.ensure_model(lang_code)
     update_main_menu()
 end)
 
@@ -2710,6 +2762,7 @@ mp.register_script_message("set-config-domain", function(value)
 end)
 mp.register_script_message("set-audio-language", function(value)
     set_audio_language(get_work_dir(), value)
+    audio_support.ensure_model(value)
     update_main_menu()
 end)
 mp.register_script_message("set-config-subtitle-language", function(value)

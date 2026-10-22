@@ -141,6 +141,7 @@ local function read_json(path)
     local content = file:read("*a")
     file:close()
     local ok, data = pcall(utils.parse_json, content)
+    if ok and type(data) == "table" and next(data) == nil then return {} end
     return ok and data or nil
 end
 
